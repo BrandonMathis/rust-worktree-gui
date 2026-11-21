@@ -76,7 +76,7 @@ jobs:
       - run: brew install tmux
       # Runs the whole test suite once, instrumented, and fails if line
       # coverage drops below the floor. Raise the floor as coverage grows.
-      - run: cargo llvm-cov --locked --lcov --output-path lcov.info --fail-under-lines 0
+      - run: cargo llvm-cov --locked --lcov --output-path lcov.info --fail-under-lines 50
       - name: Coverage summary
         if: always()
         run: |
