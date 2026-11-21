@@ -101,3 +101,47 @@ fn missing_anchor_is_an_error_but_a_live_checkout_can_replace_it() {
     assert_eq!(live.common_dir, anchor.common_dir);
     assert_eq!(git::inventory(&live).unwrap().len(), 1);
 }
+
+#[test]
+fn creating_a_project_initializes_git_without_overwriting_an_existing_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().canonicalize().unwrap();
+    let folder = parent.join("New project");
+    let checkout = git::new_project(&folder).unwrap();
+    assert_eq!(checkout.root, folder);
+    assert_eq!(git::discover(&folder).unwrap(), checkout);
+    assert_eq!(git::inventory(&checkout).unwrap().len(), 1);
+    assert!(git::new_project(&folder).is_err());
+    let error =
+        git::add_worktree(&checkout, &folder, "first", &parent.join("first"), "HEAD").unwrap_err();
+    assert!(error.contains("make its first commit"));
+    assert!(!parent.join("first").exists());
+}
+
+#[test]
+fn creating_a_worktree_uses_the_requested_branch_base_and_destination() {
+    let (_tmp, root) = fixture();
+    let project = git::discover(&root).unwrap();
+    let destination = root.with_file_name("Feature checkout");
+    let created = git::add_worktree(&project, &root, "feature/new", &destination, "HEAD").unwrap();
+    assert_eq!(created, destination);
+    let trees = git::inventory(&project).unwrap();
+    assert_eq!(trees[1].path, destination);
+    assert_eq!(trees[1].branch.as_deref(), Some("feature/new"));
+    assert_eq!(trees[0].head, trees[1].head);
+    assert!(git::add_worktree(&project, &root, "another", &destination, "HEAD").is_err());
+    assert!(
+        git::add_worktree(&project, &root, "-bad", &root.with_file_name("bad"), "HEAD").is_err()
+    );
+    assert_eq!(git::inventory(&project).unwrap().len(), 2);
+}
+
+#[test]
+fn a_folder_outside_git_is_a_readable_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let error = git::discover(tmp.path()).unwrap_err();
+    assert!(
+        error.contains("git rev-parse --show-toplevel failed"),
+        "{error}"
+    );
+}
