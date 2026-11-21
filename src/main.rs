@@ -5,6 +5,7 @@ mod create;
 mod git;
 mod icons;
 mod pull_request;
+mod quit;
 mod row_menu;
 mod style;
 mod terminal;
@@ -34,6 +35,7 @@ fn main() -> iced::Result {
         size: iced::Size::new(1120.0, 720.0),
         transparent: true,
         blur: cfg!(target_os = "macos"),
+        exit_on_close_request: false,
         min_size: Some(iced::Size::new(820.0, 440.0)),
         ..iced::window::Settings::default()
     })

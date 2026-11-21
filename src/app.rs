@@ -5,7 +5,7 @@ use crate::{
     git::{self, Checkout, Worktree},
     icons,
     pull_request::{self, PullRequest},
-    row_menu, style,
+    quit, row_menu, style,
     terminal::Console,
     terminal_config::Preferences,
     tmux,
@@ -45,6 +45,7 @@ pub struct App {
     console: ConsoleState,
     terminal_preferences: Preferences,
     window_scale: f32,
+    quit_pending: bool,
     sidebar_visible: bool,
     sidebar_preview: SidebarPreview,
     picking: bool,
@@ -158,6 +159,8 @@ pub enum Message {
     Terminal(iced_term::Event),
     WindowOpened(iced::window::Id),
     WindowScale(f32),
+    QuitRequested(iced::window::Id),
+    QuitAnswered(bool),
     Forget(ProjectId),
     MenuAction(Selection, MenuAction),
     EditWorktreeName(String),
@@ -254,6 +257,7 @@ impl App {
             console: ConsoleState::default(),
             terminal_preferences: Preferences::default(),
             window_scale: 1.0,
+            quit_pending: false,
             sidebar_visible: true,
             sidebar_preview: SidebarPreview::default(),
             picking: false,
@@ -418,6 +422,21 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::QuitRequested(id) => {
+                if !self.quit_pending && !self.picking {
+                    self.quit_pending = true;
+                    return quit::confirm(id).map(Message::QuitAnswered);
+                }
+            }
+            Message::QuitAnswered(confirmed) => {
+                if self.quit_pending {
+                    self.quit_pending = false;
+                    if confirmed {
+                        return iced::exit();
+                    }
+                    return self.focus_terminal();
+                }
+            }
             Message::Pick(mode) if !self.picking && self.store.is_some() => {
                 self.picking = true;
                 self.notice = None;
@@ -676,7 +695,14 @@ impl App {
             Message::Prepared(id, result) => return self.prepared(id, result),
             Message::Detach => self.console = ConsoleState::Detached,
             Message::WindowOpened(id) => {
-                return iced::window::scale_factor(id).map(Message::WindowScale);
+                let scale = iced::window::scale_factor(id).map(Message::WindowScale);
+                #[cfg(target_os = "macos")]
+                return Task::batch([
+                    scale,
+                    iced::window::run(id, quit::install_shortcut).discard(),
+                ]);
+                #[cfg(not(target_os = "macos"))]
+                return scale;
             }
             Message::WindowScale(scale) => {
                 if self.window_scale != scale {
@@ -1661,6 +1687,9 @@ fn window_scale(
 ) -> Option<Message> {
     match event {
         iced::Event::Window(iced::window::Event::Opened { .. }) => Some(Message::WindowOpened(id)),
+        iced::Event::Window(iced::window::Event::CloseRequested) => {
+            Some(Message::QuitRequested(id))
+        }
         iced::Event::Window(iced::window::Event::Rescaled(scale)) => {
             Some(Message::WindowScale(scale))
         }
