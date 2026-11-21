@@ -23,6 +23,7 @@ This supersedes the original plan (`PLAN.md`), which launched Alacritty as an ex
 | TRM-10 | Must | tmux is found on `PATH` or in common Homebrew/MacPorts locations. `WORKTREE_BROWSER_TMUX` overrides it but must be an absolute path to an executable. A missing tmux shows install guidance. | `rejects_missing_or_relative_tmux_override` | Implemented |
 | TRM-11 | Must | Unavailable worktrees never start a terminal. | `unavailable_worktrees_never_start_a_terminal` | Implemented |
 | TRM-12 | Should | The terminal redraws correctly on resize and tmux pane splits. `⌘C`/`⌘V` copy and paste, and `Ctrl+C` interrupts. | Manual | Implemented |
+| TRM-13 | Must | Mouse wheels and trackpads scroll in the same direction; backing-pixel deltas are normalized on Retina. When tmux requests mouse reporting, wheel events go to the pane under the pointer. Shift-scroll uses local terminal history instead. | `trackpad_and_mouse_wheel_agree_on_scroll_direction`, `retina_trackpad_deltas_accumulate_and_reverse_without_jumping`, `wheel_prioritizes_tmux_mouse_mode_over_alternate_screen`, `wheel_reports_direction_and_pointer_cell_to_tmux` (vendored `iced_term` tests). Manual: enable tmux mouse mode, print several pages of numbered lines, and scroll up/down over both sides of a split. | Implemented |
 
 ## Out of scope
 
