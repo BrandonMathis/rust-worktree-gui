@@ -7,10 +7,45 @@ pub(crate) trait TerminalStyle {
     fn container_style(&self) -> container::Style;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CursorColor {
+    CellForeground,
+    CellBackground,
+    Fixed(Color),
+}
+
+impl CursorColor {
+    fn resolve(self, fg: Color, bg: Color) -> Color {
+        let color = match self {
+            Self::CellForeground => fg,
+            Self::CellBackground => bg,
+            Self::Fixed(color) => color,
+        };
+        Color { a: 1.0, ..color }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CursorColors {
+    pub cursor: CursorColor,
+    pub text: CursorColor,
+}
+
+impl Default for CursorColors {
+    fn default() -> Self {
+        Self {
+            cursor: CursorColor::CellForeground,
+            text: CursorColor::CellBackground,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ColorPalette {
     pub foreground: String,
     pub background: String,
+    pub cursor: CursorColors,
+    pub vi_mode_cursor: CursorColors,
     pub black: String,
     pub red: String,
     pub green: String,
@@ -44,6 +79,8 @@ impl Default for ColorPalette {
         Self {
             foreground: String::from("#d8d8d8"),
             background: String::from("#181818"),
+            cursor: CursorColors::default(),
+            vi_mode_cursor: CursorColors::default(),
             black: String::from("#181818"),
             red: String::from("#ac4242"),
             green: String::from("#90a959"),
@@ -95,6 +132,27 @@ impl Theme {
             palette: settings.color_pallete,
             ansi256_colors: build_ansi256_colors(),
         }
+    }
+
+    pub(crate) fn cursor_colors(
+        &self,
+        fg: Color,
+        bg: Color,
+        override_color: Option<ansi::Rgb>,
+        vi: bool,
+    ) -> (Color, Color) {
+        let config = if vi {
+            self.palette.vi_mode_cursor
+        } else {
+            self.palette.cursor
+        };
+        let cursor = override_color.map_or_else(
+            || config.cursor.resolve(fg, bg),
+            |rgb| Color::from_rgb8(rgb.r, rgb.g, rgb.b),
+        );
+        let cursor = contrasting(cursor, bg, 3.0);
+        let text = contrasting(config.text.resolve(fg, bg), cursor, 4.5);
+        (cursor, text)
     }
 
     pub fn get_color(&self, c: ansi::Color) -> Color {
@@ -182,6 +240,31 @@ impl Theme {
     }
 }
 
+fn contrasting(
+    preferred: Color,
+    background: Color,
+    minimum_ratio: f32,
+) -> Color {
+    if contrast(preferred, background) >= minimum_ratio {
+        preferred
+    } else if contrast(Color::WHITE, background)
+        >= contrast(Color::BLACK, background)
+    {
+        Color::WHITE
+    } else {
+        Color::BLACK
+    }
+}
+
+fn contrast(a: Color, b: Color) -> f32 {
+    let luminance = |color: Color| {
+        let [r, g, b, _] = color.into_linear();
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+    };
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
 fn build_ansi256_colors() -> HashMap<u8, Color> {
     let mut ansi256_colors = HashMap::new();
 
@@ -241,6 +324,37 @@ impl TerminalStyle for Theme {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn caret_contrast_is_preserved_on_dark_light_and_highlighted_cells() {
+        use super::*;
+        let light = Color::from_rgb8(248, 248, 242);
+        let dark = Color::from_rgb8(40, 42, 54);
+        let highlight = Color::from_rgb8(68, 71, 90);
+        let palette = ColorPalette {
+            cursor: CursorColors {
+                cursor: CursorColor::Fixed(light),
+                text: CursorColor::Fixed(dark),
+            },
+            ..ColorPalette::default()
+        };
+        let theme = Theme::new(ThemeSettings::new(Box::new(palette)));
+        assert_eq!(
+            theme.cursor_colors(light, dark, None, false),
+            (light, dark)
+        );
+        for color in [dark, light, highlight] {
+            let rgb = ansi::Rgb {
+                r: (color.r * 255.0).round() as u8,
+                g: (color.g * 255.0).round() as u8,
+                b: (color.b * 255.0).round() as u8,
+            };
+            let (cursor, text) =
+                theme.cursor_colors(color, color, Some(rgb), false);
+            assert!(contrast(cursor, color) >= 3.0);
+            assert!(contrast(text, cursor) >= 4.5);
+        }
+    }
+
     use super::*;
     use alacritty_terminal::vte::ansi;
     use std::collections::HashMap;

@@ -40,6 +40,8 @@ pub struct FontSettings {
     pub size: f32,
     pub scale_factor: f32,
     pub font_type: Font,
+    /// Optional grid cell dimensions in logical pixels, independent of glyph size.
+    pub cell_size: Option<iced::Size>,
 }
 
 impl Default for FontSettings {
@@ -48,6 +50,7 @@ impl Default for FontSettings {
             size: 14.0,
             scale_factor: 1.3,
             font_type: Font::MONOSPACE,
+            cell_size: None,
         }
     }
 }

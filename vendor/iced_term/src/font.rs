@@ -13,6 +13,7 @@ pub struct TermFont {
     pub(crate) font_type: Font,
     pub(crate) scale_factor: f32,
     pub(crate) measure: Size<f32>,
+    cell_size: Option<Size<f32>>,
 }
 
 impl TermFont {
@@ -21,17 +22,22 @@ impl TermFont {
             size: settings.size,
             font_type: settings.font_type,
             scale_factor: settings.scale_factor,
-            measure: font_measure(
-                settings.size,
-                settings.scale_factor,
-                settings.font_type,
-            ),
+            measure: settings.cell_size.unwrap_or_else(|| {
+                font_measure(
+                    settings.size,
+                    settings.scale_factor,
+                    settings.font_type,
+                )
+            }),
+            cell_size: settings.cell_size,
         }
     }
 
     pub fn sync(&mut self) {
-        self.measure =
-            font_measure(self.size, self.scale_factor, self.font_type)
+        if self.cell_size.is_none() {
+            self.measure =
+                font_measure(self.size, self.scale_factor, self.font_type);
+        }
     }
 }
 

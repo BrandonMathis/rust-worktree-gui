@@ -2,16 +2,17 @@ use crate::backend::{
     Backend, Command, LinkAction, MouseButton, RenderableContent,
 };
 use crate::bindings::{BindingAction, BindingsLayout, InputKind};
+use crate::block_glyph::BlockGlyph;
 use crate::terminal::{Event, Terminal};
 use crate::theme::TerminalStyle;
 use alacritty_terminal::index::Point as TerminalGridPoint;
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::{cell, TermMode};
-use alacritty_terminal::vte::ansi::{self as ansi, NamedColor};
+use alacritty_terminal::vte::ansi::{self as ansi, CursorShape, NamedColor};
 use iced::alignment::Vertical;
 use iced::font::{Style as FontStyle, Weight as FontWeight};
 use iced::mouse::{Cursor, ScrollDelta};
-use iced::widget::canvas::{Path, Text};
+use iced::widget::canvas::{Frame, Path, Text};
 use iced::widget::container;
 use iced::{Color, Element, Length, Point, Rectangle, Size, Theme};
 use iced_core::clipboard::Kind as ClipboardKind;
@@ -25,15 +26,42 @@ use iced_graphics::geometry::Stroke;
 
 pub struct TerminalView<'a> {
     term: &'a Terminal,
+    dynamic_padding_scale: Option<f32>,
+    backing_scale: f32,
 }
 
 impl<'a> TerminalView<'a> {
     pub fn show(term: &'a Terminal) -> Element<'a, Event> {
-        container(Self { term })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(|_| term.theme.container_style())
-            .into()
+        Self::show_at_scale(term, 1.0)
+    }
+
+    /// Show an unpadded terminal at the window's physical-to-logical scale.
+    pub fn show_at_scale(term: &'a Terminal, scale: f32) -> Element<'a, Event> {
+        Self::show_with_options(term, None, scale)
+    }
+
+    /// Optionally distribute leftover backing pixels evenly around the grid.
+    pub fn show_with_dynamic_padding(
+        term: &'a Terminal,
+        scale: Option<f32>,
+    ) -> Element<'a, Event> {
+        Self::show_with_options(term, scale, scale.unwrap_or(1.0))
+    }
+
+    fn show_with_options(
+        term: &'a Terminal,
+        padding: Option<f32>,
+        scale: f32,
+    ) -> Element<'a, Event> {
+        container(Self {
+            term,
+            dynamic_padding_scale: padding,
+            backing_scale: scale.max(1.0),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_| term.theme.container_style())
+        .into()
     }
 
     pub fn focus<Message: 'static>(
@@ -156,12 +184,25 @@ impl<'a> TerminalView<'a> {
                 );
             },
             iced::mouse::Event::WheelScrolled { delta } => {
-                Self::handle_wheel_scrolled(
-                    state,
+                let lines = state.wheel_lines(
                     *delta,
-                    &self.term.font.measure,
-                    &mut commands,
+                    terminal_content.terminal_size.cell_height,
+                    self.backing_scale,
                 );
+                if lines != 0 {
+                    // Mouse protocols use visible cell coordinates, not history line numbers.
+                    let point = Backend::selection_point(
+                        cursor_position.x - layout_position.x,
+                        cursor_position.y - layout_position.y,
+                        &terminal_content.terminal_size,
+                        0,
+                    );
+                    commands.push(Command::WheelScroll(
+                        lines,
+                        state.keyboard_modifiers,
+                        point,
+                    ));
+                }
             },
             _ => {},
         }
@@ -278,29 +319,6 @@ impl<'a> TerminalView<'a> {
         }
     }
 
-    fn handle_wheel_scrolled(
-        state: &mut TerminalViewState,
-        delta: ScrollDelta,
-        font_measure: &Size<f32>,
-        commands: &mut Vec<Command>,
-    ) {
-        match delta {
-            ScrollDelta::Lines { y, .. } => {
-                let lines = y.signum() * y.abs().round();
-                commands.push(Command::Scroll(lines as i32));
-            },
-            ScrollDelta::Pixels { y, .. } => {
-                state.scroll_pixels -= y;
-                let line_height = font_measure.height; // Assume this method exists and gives the height of a line
-                let lines = (state.scroll_pixels / line_height).trunc();
-                state.scroll_pixels %= line_height;
-                if lines != 0.0 {
-                    commands.push(Command::Scroll(lines as i32));
-                }
-            },
-        }
-    }
-
     fn handle_keyboard_event(
         &self,
         state: &mut TerminalViewState,
@@ -384,6 +402,50 @@ impl<'a> TerminalView<'a> {
     }
 }
 
+fn draw_cursor_stroke(
+    frame: &mut Frame,
+    shape: CursorShape,
+    bounds: Rectangle,
+    color: Color,
+) {
+    let Rectangle {
+        x,
+        y,
+        width,
+        height,
+    } = bounds;
+    let thickness = 1.5_f32.min(width).min(height);
+    let mut fill = |x, y, width, height| {
+        frame.fill_rectangle(Point::new(x, y), Size::new(width, height), color)
+    };
+    match shape {
+        CursorShape::Beam => fill(x, y, thickness, height),
+        CursorShape::Underline => {
+            fill(x, y + height - thickness, width, thickness)
+        },
+        CursorShape::HollowBlock => {
+            fill(x, y, width, thickness);
+            fill(x, y + height - thickness, width, thickness);
+            fill(x, y, thickness, height);
+            fill(x + width - thickness, y, thickness, height);
+        },
+        CursorShape::Block | CursorShape::Hidden => {},
+    }
+}
+
+fn grid_layout(layout: iced_core::Layout<'_>) -> iced_core::Layout<'_> {
+    layout.children().next().unwrap_or(layout)
+}
+
+fn center_grid(span: f32, cell: f32, scale: f32) -> (f32, f32) {
+    if cell <= 0.0 {
+        return (span, 0.0);
+    }
+    let occupied = (span / cell).floor() * cell;
+    let before = ((span - occupied) * scale / 2.0).floor() / scale;
+    (occupied, before)
+}
+
 impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
     fn size(&self) -> Size<Length> {
         Size {
@@ -407,7 +469,18 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
         limits: &iced_core::layout::Limits,
     ) -> iced_core::layout::Node {
         let size = limits.resolve(Length::Fill, Length::Fill, Size::ZERO);
-        iced::advanced::layout::Node::new(size)
+        use iced::advanced::layout::Node;
+        let Some(scale) =
+            self.dynamic_padding_scale.filter(|scale| *scale > 0.0)
+        else {
+            return Node::new(size);
+        };
+        let cell = self.term.font.measure;
+        let (width, x) = center_grid(size.width, cell.width, scale);
+        let (height, y) = center_grid(size.height, cell.height, scale);
+        let grid =
+            Node::new(Size::new(width, height)).move_to(Point::new(x, y));
+        Node::with_children(size, vec![grid])
     }
 
     fn operate(
@@ -432,11 +505,12 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
         _cursor: Cursor,
         viewport: &Rectangle,
     ) {
+        let layout = grid_layout(layout);
         let state = tree.state.downcast_ref::<TerminalViewState>();
         let content = self.term.backend.renderable_content();
         let term_size = content.terminal_size;
-        let cell_width = term_size.cell_width as f32;
-        let cell_height = term_size.cell_height as f32;
+        let cell_width = term_size.cell_width;
+        let cell_height = term_size.cell_height;
         let font_size = self.term.font.size;
         let font_scale_factor = self.term.font.scale_factor;
         let layout_offset_x = layout.position().x;
@@ -457,6 +531,9 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
 
             let mut last_line: Option<i32> = None;
             let mut bg_batch_rect = BackgroundRect::default();
+            let mut cursor_stroke = None;
+            let mut wide_cursor_spacer = None;
+            let mut blocks = Vec::new();
 
             for indexed in content.grid.display_iter() {
                 // Compute per-cell geometry cheaply
@@ -493,11 +570,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                 }
 
                 // Handle dim, inverse, and selected text
-                if indexed
-                    .cell
-                    .flags
-                    .intersects(cell::Flags::DIM | cell::Flags::DIM_BOLD)
-                {
+                if indexed.cell.flags.contains(cell::Flags::DIM) {
                     fg.a *= 0.7;
                 }
                 if indexed.cell.flags.contains(cell::Flags::INVERSE)
@@ -506,6 +579,48 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                         .is_some_and(|r| r.contains(indexed.point))
                 {
                     std::mem::swap(&mut fg, &mut bg);
+                }
+
+                // A block cursor is part of the cell's colors. Painting it separately
+                // would let a later background batch cover it on highlighted lines.
+                if let Some(color) = wide_cursor_spacer.take() {
+                    if indexed
+                        .cell
+                        .flags
+                        .contains(cell::Flags::WIDE_CHAR_SPACER)
+                    {
+                        bg = color;
+                    }
+                }
+                let shape = content.cursor.shape;
+                if indexed.point == content.cursor.point
+                    && shape != CursorShape::Hidden
+                {
+                    let (cursor, text) = self.term.theme.cursor_colors(
+                        fg,
+                        bg,
+                        content.cursor_override,
+                        content.terminal_mode.contains(TermMode::VI),
+                    );
+                    let wide =
+                        indexed.cell.flags.contains(cell::Flags::WIDE_CHAR);
+                    if shape == CursorShape::Block {
+                        bg = cursor;
+                        fg = text;
+                        wide_cursor_spacer = wide.then_some(cursor);
+                    } else {
+                        cursor_stroke = Some((
+                            shape,
+                            Rectangle::new(
+                                Point::new(x, y),
+                                Size::new(
+                                    cell_width * if wide { 2.0 } else { 1.0 },
+                                    cell_height,
+                                ),
+                            ),
+                            cursor,
+                        ));
+                    }
                 }
 
                 // Batch draw backgrounds: skip default background (container already paints it)
@@ -561,31 +676,22 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                     );
                 }
 
-                // Handle cursor rendering
-                if content.grid.cursor.point == indexed.point
-                    && content.terminal_mode.contains(TermMode::SHOW_CURSOR)
+                // Draw text. APP_CURSOR describes arrow-key encoding, not the cursor shape.
+                if indexed.c != ' '
+                    && indexed.c != '\t'
+                    && !indexed.cell.flags.contains(cell::Flags::HIDDEN)
                 {
-                    let cursor_color =
-                        self.term.theme.get_color(content.cursor.fg);
-                    let cursor_rect =
-                        Path::rectangle(Point::new(x, y), cell_size);
-                    frame.fill(&cursor_rect, cursor_color);
-                }
-
-                // Draw text
-                if indexed.c != ' ' && indexed.c != '\t' {
-                    if content.grid.cursor.point == indexed.point
-                        && content.terminal_mode.contains(TermMode::APP_CURSOR)
-                    {
-                        fg = bg;
+                    if let Some(block) = BlockGlyph::from_char(indexed.c) {
+                        blocks.push((
+                            block,
+                            Rectangle::new(Point::new(x, y), cell_size),
+                            fg,
+                        ));
+                        continue;
                     }
                     // Resolve font style (bold/italic) from cell flags
                     let mut font = self.term.font.font_type;
-                    if indexed
-                        .cell
-                        .flags
-                        .intersects(cell::Flags::BOLD | cell::Flags::DIM_BOLD)
-                    {
+                    if indexed.cell.flags.contains(cell::Flags::BOLD) {
                         font.weight = FontWeight::Bold;
                     }
                     if indexed.cell.flags.contains(cell::Flags::ITALIC) {
@@ -614,6 +720,15 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                     bg_batch_rect.color,
                 );
             }
+            // Like font glyphs, these foreground shapes must sit above all backgrounds.
+            for (block, cell, color) in blocks {
+                block.draw(cell, |point, size| {
+                    frame.fill_rectangle(point, size, color)
+                });
+            }
+            if let Some((shape, bounds, color)) = cursor_stroke {
+                draw_cursor_stroke(frame, shape, bounds, color);
+            }
         });
 
         use iced::advanced::graphics::geometry::Renderer as _;
@@ -631,6 +746,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
         shell: &mut iced_graphics::core::Shell<'_, Event>,
         _viewport: &Rectangle,
     ) {
+        let layout = grid_layout(layout);
         let state = tree.state.downcast_mut::<TerminalViewState>();
         self.handle_resize(state, layout, shell);
 
@@ -678,7 +794,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
         let mut cursor_mode = iced_core::mouse::Interaction::Idle;
         let terminal_mode =
             self.term.backend.renderable_content().terminal_mode;
-        if self.is_cursor_in_layout(cursor, layout)
+        if self.is_cursor_in_layout(cursor, grid_layout(layout))
             && !terminal_mode.contains(TermMode::SGR_MOUSE)
         {
             cursor_mode = iced_core::mouse::Interaction::Text;
@@ -703,7 +819,7 @@ struct TerminalViewState {
     focus: bool,
     is_dragged: bool,
     last_click: Option<mouse::Click>,
-    scroll_pixels: f32,
+    scroll_remainder: f32,
     keyboard_modifiers: Modifiers,
     size: Size<f32>,
     mouse_position_on_grid: TerminalGridPoint,
@@ -715,11 +831,38 @@ impl TerminalViewState {
             focus: false,
             is_dragged: false,
             last_click: None,
-            scroll_pixels: 0.0,
+            scroll_remainder: 0.0,
             keyboard_modifiers: Modifiers::empty(),
             size: Size::from([0.0, 0.0]),
             mouse_position_on_grid: TerminalGridPoint::default(),
         }
+    }
+}
+
+impl TerminalViewState {
+    fn wheel_lines(
+        &mut self,
+        delta: ScrollDelta,
+        cell_height: f32,
+        scale: f32,
+    ) -> i32 {
+        let lines = match delta {
+            ScrollDelta::Lines { y, .. } => y,
+            // iced receives physical pixel deltas from winit; grid geometry is logical.
+            ScrollDelta::Pixels { y, .. } => {
+                y / (cell_height.max(1.0) * scale.max(1.0))
+            },
+        };
+        if !lines.is_finite() || lines == 0.0 {
+            return 0;
+        }
+        if lines.signum() != self.scroll_remainder.signum() {
+            self.scroll_remainder = 0.0;
+        }
+        let total = self.scroll_remainder + lines;
+        self.scroll_remainder = total.fract();
+        // Bound bursts of mouse reports if the OS coalesces a large gesture.
+        total.clamp(-100.0, 100.0) as i32
     }
 }
 
@@ -816,6 +959,12 @@ impl BackgroundRect {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn centers_retina_grid_without_rounding_to_logical_pixels() {
+        assert_eq!(super::center_grid(792.0, 7.5, 2.0), (787.5, 2.0));
+        assert_eq!(super::center_grid(50.5, 16.5, 2.0), (49.5, 0.5));
+    }
+
     use super::*;
 
     mod handle_left_button_pressed_tests {
@@ -1186,79 +1335,43 @@ mod tests {
         }
     }
 
-    mod handle_wheel_scrolled_tests {
-        use super::*;
-        use crate::font::TermFont;
-        use crate::settings::FontSettings;
-
-        #[test]
-        fn scroll_with_lines_downward() {
-            let mut state = TerminalViewState::new();
-            let font = TermFont::new(FontSettings::default());
-            let mut commands = Vec::new();
-
-            TerminalView::handle_wheel_scrolled(
-                &mut state,
-                ScrollDelta::Lines { y: 3.0, x: 0.0 }, // Scroll down 3 lines
-                &font.measure,
-                &mut commands,
+    #[test]
+    fn trackpad_and_mouse_wheel_agree_on_scroll_direction() {
+        let mut state = TerminalViewState::new();
+        for sign in [-1.0, 1.0] {
+            assert_eq!(
+                state.wheel_lines(
+                    ScrollDelta::Lines {
+                        x: 0.0,
+                        y: 2.0 * sign
+                    },
+                    16.5,
+                    2.0
+                ),
+                (2.0 * sign) as i32
             );
-
-            assert_eq!(commands.len(), 1);
-            assert!(matches!(commands[0], Command::Scroll(3)));
-        }
-
-        #[test]
-        fn scroll_with_lines_upward() {
-            let mut state = TerminalViewState::new();
-            let font = TermFont::new(FontSettings::default());
-            let mut commands = Vec::new();
-
-            TerminalView::handle_wheel_scrolled(
-                &mut state,
-                ScrollDelta::Lines { y: -2.0, x: 0.0 },
-                &font.measure,
-                &mut commands,
+            assert_eq!(
+                state.wheel_lines(
+                    ScrollDelta::Pixels {
+                        x: 0.0,
+                        y: 66.0 * sign
+                    },
+                    16.5,
+                    2.0
+                ),
+                (2.0 * sign) as i32
             );
-
-            assert_eq!(commands.len(), 1);
-            assert!(matches!(commands[0], Command::Scroll(-2)));
         }
+    }
 
-        #[test]
-        fn scroll_with_pixels_accumulating_downward() {
-            let mut state = TerminalViewState::new();
-            let font = TermFont::new(FontSettings::default());
-            let mut commands = Vec::new();
-
-            TerminalView::handle_wheel_scrolled(
-                &mut state,
-                ScrollDelta::Pixels { y: 45.0, x: 0.0 },
-                &font.measure,
-                &mut commands,
-            );
-
-            assert_eq!(commands.len(), 1);
-            assert!(matches!(commands[0], Command::Scroll(-2)));
-            assert_eq!(state.scroll_pixels, -8.600002);
-        }
-
-        #[test]
-        fn scroll_with_pixels_accumulating_upward() {
-            let mut state = TerminalViewState::new();
-            let font = TermFont::new(FontSettings::default());
-            let mut commands = Vec::new();
-
-            TerminalView::handle_wheel_scrolled(
-                &mut state,
-                ScrollDelta::Pixels { y: -60.0, x: 0.0 },
-                &font.measure,
-                &mut commands,
-            );
-
-            assert_eq!(commands.len(), 1);
-            assert!(matches!(commands[0], Command::Scroll(3)));
-            assert_eq!(state.scroll_pixels, 5.4000034);
-        }
+    #[test]
+    fn retina_trackpad_deltas_accumulate_and_reverse_without_jumping() {
+        let mut state = TerminalViewState::new();
+        let pixels = |y| ScrollDelta::Pixels { x: 100.0, y };
+        assert_eq!(state.wheel_lines(pixels(15.0), 16.5, 2.0), 0);
+        assert_eq!(state.wheel_lines(pixels(18.0), 16.5, 2.0), 1);
+        assert_eq!(state.wheel_lines(pixels(16.5), 16.5, 2.0), 0);
+        assert_eq!(state.wheel_lines(pixels(0.0), 16.5, 2.0), 0);
+        assert_eq!(state.wheel_lines(pixels(-33.0), 16.5, 2.0), -1);
     }
 }

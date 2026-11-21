@@ -3,6 +3,7 @@ pub mod bindings;
 pub mod settings;
 
 mod backend;
+mod block_glyph;
 mod font;
 mod terminal;
 mod theme;
@@ -15,5 +16,5 @@ pub use alacritty_terminal::term::TermMode;
 pub use backend::Command as BackendCommand;
 pub use backend::{LinkAction, MouseButton};
 pub use terminal::{Command, Event, Terminal};
-pub use theme::{ColorPalette, Theme};
+pub use theme::{ColorPalette, CursorColor, CursorColors, Theme};
 pub use view::TerminalView;

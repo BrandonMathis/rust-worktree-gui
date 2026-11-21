@@ -10,8 +10,10 @@ use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::{
-    self, cell::Cell, test::TermSize, viewport_to_point, Term, TermMode,
+    self, cell::Cell, test::TermSize, viewport_to_point, RenderableCursor,
+    Term, TermMode,
 };
+use alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
 use alacritty_terminal::{tty, Grid};
 use iced::keyboard::Modifiers;
 use iced_core::Size;
@@ -27,7 +29,7 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 #[derive(Debug, Clone)]
 pub enum Command {
     Write(Vec<u8>),
-    Scroll(i32),
+    WheelScroll(i32, Modifiers, Point),
     Resize(Option<Size<f32>>, Option<Size<f32>>),
     SelectStart(SelectionType, (f32, f32)),
     SelectUpdate((f32, f32)),
@@ -77,8 +79,8 @@ pub enum LinkAction {
 
 #[derive(Clone, Copy, Debug)]
 pub struct TerminalSize {
-    pub cell_width: u16,
-    pub cell_height: u16,
+    pub cell_width: f32,
+    pub cell_height: f32,
     num_cols: u16,
     num_lines: u16,
     layout_width: f32,
@@ -88,8 +90,8 @@ pub struct TerminalSize {
 impl Default for TerminalSize {
     fn default() -> Self {
         Self {
-            cell_width: 1,
-            cell_height: 1,
+            cell_width: 1.0,
+            cell_height: 1.0,
             num_cols: 80,
             num_lines: 50,
             layout_width: 80.0,
@@ -125,8 +127,8 @@ impl From<TerminalSize> for WindowSize {
         Self {
             num_lines: size.num_lines,
             num_cols: size.num_cols,
-            cell_width: size.cell_width,
-            cell_height: size.cell_height,
+            cell_width: size.cell_width.round() as u16,
+            cell_height: size.cell_height.round() as u16,
         }
     }
 }
@@ -158,16 +160,16 @@ impl Backend {
 
         let event_proxy = EventProxy(pty_event_proxy_sender);
 
-        let mut term = Term::new(config, &terminal_size, event_proxy.clone());
-
-        let cursor = term.grid_mut().cursor_cell().clone();
+        let term = Term::new(config, &terminal_size, event_proxy.clone());
+        let cursor = term.renderable_content().cursor;
 
         let initial_content = RenderableContent {
             grid: term.grid().clone(),
             selectable_range: None,
             terminal_mode: *term.mode(),
             terminal_size,
-            cursor: cursor.clone(),
+            cursor,
+            cursor_override: None,
             hovered_hyperlink: None,
         };
 
@@ -212,8 +214,8 @@ impl Backend {
                 self.write(input);
                 term.scroll_display(Scroll::Bottom);
             },
-            Command::Scroll(delta) => {
-                self.scroll(&mut term, delta);
+            Command::WheelScroll(lines, modifiers, point) => {
+                self.scroll(&mut term, lines, modifiers, point);
             },
             Command::Resize(layout_size, font_measure) => {
                 self.resize(&mut term, layout_size, font_measure);
@@ -284,55 +286,57 @@ impl Backend {
         point: Point,
         pressed: bool,
     ) {
-        let mut mods = 0;
-        if modifiers.contains(Modifiers::SHIFT) {
-            mods += 4;
+        if let Some(bytes) = Self::mouse_report_sequence(
+            self.last_content.terminal_mode,
+            button,
+            modifiers,
+            point,
+            pressed,
+        ) {
+            self.notifier.notify(bytes);
         }
-        if modifiers.contains(Modifiers::ALT) {
-            mods += 8;
-        }
-        if modifiers.contains(Modifiers::COMMAND) {
-            mods += 16;
-        }
+    }
 
-        match MouseMode::from(self.last_content.terminal_mode) {
+    fn mouse_report_sequence(
+        mode: TermMode,
+        button: MouseButton,
+        modifiers: Modifiers,
+        point: Point,
+        pressed: bool,
+    ) -> Option<Vec<u8>> {
+        let mods = (if modifiers.shift() { 4 } else { 0 })
+            + (if modifiers.alt() { 8 } else { 0 })
+            + (if modifiers.control() { 16 } else { 0 });
+        match MouseMode::from(mode) {
             MouseMode::Sgr => {
-                self.sgr_mouse_report(point, button as u8 + mods, pressed)
+                let suffix = if pressed { 'M' } else { 'm' };
+                Some(
+                    format!(
+                        "\x1b[<{};{};{}{suffix}",
+                        button as u8 + mods,
+                        point.column + 1,
+                        point.line + 1
+                    )
+                    .into_bytes(),
+                )
             },
             MouseMode::Normal(is_utf8) => {
-                if pressed {
-                    self.normal_mouse_report(
-                        point,
-                        button as u8 + mods,
-                        is_utf8,
-                    )
-                } else {
-                    self.normal_mouse_report(point, 3 + mods, is_utf8)
-                }
+                let code = if pressed { button as u8 } else { 3 };
+                Self::normal_mouse_report(point, code + mods, is_utf8)
             },
         }
     }
 
-    fn sgr_mouse_report(&self, point: Point, button: u8, pressed: bool) {
-        let c = if pressed { 'M' } else { 'm' };
-
-        let msg = format!(
-            "\x1b[<{};{};{}{}",
-            button,
-            point.column + 1,
-            point.line + 1,
-            c
-        );
-
-        self.notifier.notify(msg.as_bytes().to_vec());
-    }
-
-    fn normal_mouse_report(&self, point: Point, button: u8, is_utf8: bool) {
+    fn normal_mouse_report(
+        point: Point,
+        button: u8,
+        is_utf8: bool,
+    ) -> Option<Vec<u8>> {
         let Point { line, column } = point;
         let max_point = if is_utf8 { 2015 } else { 223 };
 
-        if line >= max_point || column >= max_point {
-            return;
+        if line.0 < 0 || line >= max_point || column >= max_point {
+            return None;
         }
 
         let mut msg = vec![b'\x1b', b'[', b'M', 32 + button];
@@ -356,7 +360,7 @@ impl Backend {
             msg.push(32 + 1 + line.0 as u8);
         }
 
-        self.notifier.notify(msg);
+        Some(msg)
     }
 
     fn start_selection(
@@ -399,18 +403,18 @@ impl Backend {
         terminal_size: &TerminalSize,
         display_offset: usize,
     ) -> Point {
-        let col = (x as usize) / (terminal_size.cell_width as usize);
+        let col = (x / terminal_size.cell_width) as usize;
         let col = min(Column(col), Column(terminal_size.num_cols as usize - 1));
 
-        let line = (y as usize) / (terminal_size.cell_height as usize);
+        let line = (y / terminal_size.cell_height) as usize;
         let line = min(line, terminal_size.num_lines as usize - 1);
 
         viewport_to_point(display_offset, Point::new(line, col))
     }
 
     fn selection_side(&self, x: f32) -> Side {
-        let cell_x = x as usize % self.size.cell_width as usize;
-        let half_cell_width = (self.size.cell_width as f32 / 2.0) as usize;
+        let cell_x = x.rem_euclid(self.size.cell_width);
+        let half_cell_width = self.size.cell_width / 2.0;
 
         if cell_x > half_cell_width {
             Side::Right
@@ -431,14 +435,14 @@ impl Backend {
         };
 
         if let Some(size) = font_measure {
-            self.size.cell_height = size.height as u16;
-            self.size.cell_width = size.width as u16;
+            self.size.cell_height = size.height.max(1.0);
+            self.size.cell_width = size.width.max(1.0);
         }
 
-        let lines = (self.size.layout_height / self.size.cell_height as f32)
-            .floor() as u16;
-        let cols = (self.size.layout_width / self.size.cell_width as f32)
-            .floor() as u16;
+        let lines =
+            (self.size.layout_height / self.size.cell_height).floor() as u16;
+        let cols =
+            (self.size.layout_width / self.size.cell_width).floor() as u16;
         if lines > 0 && cols > 0 {
             self.size.num_lines = lines;
             self.size.num_cols = cols;
@@ -454,26 +458,42 @@ impl Backend {
         self.notifier.notify(input);
     }
 
-    fn scroll(&mut self, terminal: &mut Term<EventProxy>, delta_value: i32) {
-        if delta_value != 0 {
-            let scroll = Scroll::Delta(delta_value);
-            if terminal
-                .mode()
-                .contains(TermMode::ALTERNATE_SCROLL | TermMode::ALT_SCREEN)
-            {
-                let line_cmd = if delta_value > 0 { b'A' } else { b'B' };
-                let mut content = vec![];
-
-                for _ in 0..delta_value.abs() {
-                    content.push(0x1b);
-                    content.push(b'O');
-                    content.push(line_cmd);
+    fn scroll(
+        &mut self,
+        terminal: &mut Term<EventProxy>,
+        lines: i32,
+        modifiers: Modifiers,
+        point: Point,
+    ) {
+        if lines == 0 {
+            return;
+        }
+        let mode = *terminal.mode();
+        match scroll_route(mode, modifiers) {
+            ScrollRoute::Mouse => {
+                let button = if lines > 0 {
+                    MouseButton::ScrollUp
+                } else {
+                    MouseButton::ScrollDown
+                };
+                // Wheel events are presses only. Keep the position so tmux can
+                // scroll the pane under the pointer, not just the focused pane.
+                if let Some(report) = Self::mouse_report_sequence(
+                    mode, button, modifiers, point, true,
+                ) {
+                    self.notifier.notify(
+                        report.repeat(lines.unsigned_abs().min(100) as usize),
+                    );
                 }
-
-                self.notifier.notify(content);
-            } else {
-                terminal.grid_mut().scroll_display(scroll);
-            }
+            },
+            ScrollRoute::Alternate => {
+                let key = if lines > 0 { b"\x1bOA" } else { b"\x1bOB" };
+                self.notifier
+                    .notify(key.repeat(lines.unsigned_abs().min(100) as usize));
+            },
+            ScrollRoute::History => {
+                terminal.scroll_display(Scroll::Delta(lines))
+            },
         }
     }
 
@@ -502,10 +522,11 @@ impl Backend {
             None => None,
         };
 
-        let cursor = terminal.grid_mut().cursor_cell().clone();
+        let content = terminal.renderable_content();
+        self.last_content.cursor = content.cursor;
+        self.last_content.cursor_override = content.colors[NamedColor::Cursor];
         self.last_content.grid = terminal.grid().clone();
         self.last_content.selectable_range = selectable_range;
-        self.last_content.cursor = cursor.clone();
         self.last_content.terminal_mode = *terminal.mode();
         self.last_content.terminal_size = self.size;
     }
@@ -547,11 +568,31 @@ fn visible_regex_match_iter<'a>(
         .take_while(move |rm| rm.start().line <= viewport_end)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ScrollRoute {
+    Mouse,
+    Alternate,
+    History,
+}
+
+fn scroll_route(mode: TermMode, modifiers: Modifiers) -> ScrollRoute {
+    if modifiers.shift() {
+        ScrollRoute::History
+    } else if mode.intersects(TermMode::MOUSE_MODE) {
+        ScrollRoute::Mouse
+    } else if mode.contains(TermMode::ALTERNATE_SCROLL | TermMode::ALT_SCREEN) {
+        ScrollRoute::Alternate
+    } else {
+        ScrollRoute::History
+    }
+}
+
 pub struct RenderableContent {
     pub grid: Grid<Cell>,
     pub hovered_hyperlink: Option<RangeInclusive<Point>>,
     pub selectable_range: Option<SelectionRange>,
-    pub cursor: Cell,
+    pub cursor: RenderableCursor,
+    pub cursor_override: Option<Rgb>,
     pub terminal_mode: TermMode,
     pub terminal_size: TerminalSize,
 }
@@ -562,10 +603,63 @@ impl Default for RenderableContent {
             grid: Grid::new(0, 0, 0),
             hovered_hyperlink: None,
             selectable_range: None,
-            cursor: Cell::default(),
+            cursor: RenderableCursor {
+                shape: CursorShape::Hidden,
+                point: Point::default(),
+            },
+            cursor_override: None,
             terminal_mode: TermMode::empty(),
             terminal_size: TerminalSize::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wheel_prioritizes_tmux_mouse_mode_over_alternate_screen() {
+        let alternate = TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL;
+        let mouse = alternate | TermMode::MOUSE_REPORT_CLICK;
+        assert_eq!(scroll_route(mouse, Modifiers::empty()), ScrollRoute::Mouse);
+        assert_eq!(scroll_route(mouse, Modifiers::SHIFT), ScrollRoute::History);
+        assert_eq!(
+            scroll_route(alternate, Modifiers::empty()),
+            ScrollRoute::Alternate
+        );
+        assert_eq!(
+            scroll_route(TermMode::empty(), Modifiers::empty()),
+            ScrollRoute::History
+        );
+    }
+
+    #[test]
+    fn wheel_reports_direction_and_pointer_cell_to_tmux() {
+        let point = Point::new(Line(4), Column(17));
+        let mode = TermMode::SGR_MOUSE | TermMode::MOUSE_REPORT_CLICK;
+        assert_eq!(
+            Backend::mouse_report_sequence(
+                mode,
+                MouseButton::ScrollUp,
+                Modifiers::empty(),
+                point,
+                true
+            )
+            .unwrap(),
+            b"\x1b[<64;18;5M"
+        );
+        assert_eq!(
+            Backend::mouse_report_sequence(
+                mode,
+                MouseButton::ScrollDown,
+                Modifiers::CTRL,
+                point,
+                true
+            )
+            .unwrap(),
+            b"\x1b[<81;18;5M"
+        );
     }
 }
 
