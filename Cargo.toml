@@ -27,3 +27,17 @@ raw-window-handle = "0.6"
 
 [patch.crates-io]
 iced_term = { path = "vendor/iced_term" }
+
+# Lints checked by `cargo clippy` locally and in CI (`.github/workflows/ci.yml`).
+# Panicking helpers are denied in app code because errors must reach the user
+# as a notice, never crash the app. `clippy.toml` allows them inside tests.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"

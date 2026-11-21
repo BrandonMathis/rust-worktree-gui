@@ -13,9 +13,12 @@ cargo run --locked                                   # launch the app (needs tmu
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked                                  # all tests; add a name to filter
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
+cargo deny check                                     # advisories, licenses, sources (deny.toml)
+cargo llvm-cov --locked                              # coverage; CI enforces a line-coverage floor
 ```
 
-All three checks must pass before you call work done. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
+Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
 
 ## Requirements are the spec
 
@@ -58,6 +61,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 
 ## Tests
 
+- Write tests only to verify app functionality: the behavior a user or an FRD requirement depends on. Don't add tests to raise the coverage number, to exercise trivial getters or library code, or to pin implementation details. Coverage is a signal for finding untested behavior, not a target.
 - Unit tests live next to the code in `#[cfg(test)] mod tests`. Use `tests/git_fixtures.rs` (`fixture()`, `run_git()`) to build real temporary repositories. The fixture paths deliberately contain spaces and newlines.
 - Drive the app state machine through `App::from_bookmarks(Store::open_path(tmp))` and `app.update(Message::…)`. Use `Task::units()` to assert which background work was started.
 - Tests that need tmux must use their own `-S <tmpdir>/sock -f /dev/null` server and skip if tmux is missing. Never touch the real `worktree-browser` socket or the user's home config from a test.
