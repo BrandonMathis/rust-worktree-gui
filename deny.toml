@@ -1,0 +1,46 @@
+# cargo-deny checks the dependency graph: known vulnerabilities, licenses,
+# duplicate or banned crates, and where crates come from.
+# Run locally with `cargo deny check` (install: `cargo install --locked cargo-deny@0.21.0`;
+# newer releases need a newer Rust than the pinned 1.90).
+
+[graph]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+all-features = true
+
+[advisories]
+# Fails on RustSec vulnerabilities and on crates that are unmaintained or yanked.
+yanked = "deny"
+# Unmaintained (not vulnerable) crates that arrive through iced's renderers.
+# There is no upgrade path until iced moves off them; revisit on iced upgrades.
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste: build-time macro via wgpu-hal/metal" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: via cosmic-text/fontdb and resvg" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz: via resvg/usvg SVG text shaping" },
+]
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+# This app is not published, so its own missing license field is fine.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# The vendored iced_term is a path dependency patched over crates.io.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

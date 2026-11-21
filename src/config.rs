@@ -134,7 +134,10 @@ impl Store {
 
         let error =
             |err: &dyn std::fmt::Display| format!("Could not save {}: {err}", self.path.display());
-        let parent = self.path.parent().expect("store path has a parent");
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| error(&"the path has no parent directory"))?;
         fs::create_dir_all(parent).map_err(|err| error(&err))?;
         // Replacing the file atomically avoids losing the bookmarks on a failed write.
         let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|err| error(&err))?;
