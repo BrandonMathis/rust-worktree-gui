@@ -1,7 +1,7 @@
 use crate::git::Checkout;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, BufReader, Write};
@@ -12,10 +12,33 @@ pub struct Store {
     path: PathBuf,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectBookmark {
+    pub checkout: Checkout,
+    pub worktree_names: BTreeMap<PathBuf, String>,
+}
+
+impl From<Checkout> for ProjectBookmark {
+    fn from(checkout: Checkout) -> Self {
+        Self {
+            checkout,
+            worktree_names: BTreeMap::new(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Bookmark {
     anchor: StoredPath,
     common_dir: StoredPath,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    worktree_names: Vec<WorktreeName>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WorktreeName {
+    path: StoredPath,
+    name: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,19 +67,19 @@ impl From<StoredPath> for PathBuf {
 }
 
 impl Store {
-    pub fn open() -> Result<(Self, Vec<Checkout>), String> {
+    pub fn open() -> Result<(Self, Vec<ProjectBookmark>), String> {
         let dirs = ProjectDirs::from_path("Worktree Browser".into())
             .ok_or("Could not locate the Application Support directory")?;
         Self::open_path(dirs.config_dir().join("projects.json"))
     }
 
-    pub(crate) fn open_path(path: PathBuf) -> Result<(Self, Vec<Checkout>), String> {
+    pub(crate) fn open_path(path: PathBuf) -> Result<(Self, Vec<ProjectBookmark>), String> {
         let store = Self { path };
         let projects = store.load()?;
         Ok((store, projects))
     }
 
-    fn load(&self) -> Result<Vec<Checkout>, String> {
+    fn load(&self) -> Result<Vec<ProjectBookmark>, String> {
         let error =
             |err: &dyn std::fmt::Display| format!("Could not read {}: {err}", self.path.display());
         let file = match File::open(&self.path) {
@@ -80,17 +103,32 @@ impl Store {
             if !ids.insert(common_dir.clone()) {
                 return Err(error(&"bookmark list contains a duplicate repository"));
             }
-            projects.push(Checkout { root, common_dir });
+            projects.push(ProjectBookmark {
+                checkout: Checkout { root, common_dir },
+                worktree_names: bookmark
+                    .worktree_names
+                    .into_iter()
+                    .map(|entry| (entry.path.into(), entry.name))
+                    .collect(),
+            });
         }
         Ok(projects)
     }
 
-    pub fn save(&self, checkouts: impl IntoIterator<Item = Checkout>) -> Result<(), String> {
-        let bookmarks: Vec<_> = checkouts
+    pub fn save(&self, projects: impl IntoIterator<Item = ProjectBookmark>) -> Result<(), String> {
+        let bookmarks: Vec<_> = projects
             .into_iter()
-            .map(|checkout| Bookmark {
-                anchor: checkout.root.as_path().into(),
-                common_dir: checkout.common_dir.as_path().into(),
+            .map(|project| Bookmark {
+                anchor: project.checkout.root.as_path().into(),
+                common_dir: project.checkout.common_dir.as_path().into(),
+                worktree_names: project
+                    .worktree_names
+                    .into_iter()
+                    .map(|(path, name)| WorktreeName {
+                        path: path.as_path().into(),
+                        name,
+                    })
+                    .collect(),
             })
             .collect();
 
@@ -125,10 +163,32 @@ mod tests {
             common_dir: tmp.path().join(".git"),
         };
         assert!(store.load().unwrap().is_empty());
-        store.save([checkout.clone()]).unwrap();
-        assert_eq!(store.load().unwrap(), [checkout]);
+        let project = ProjectBookmark::from(checkout);
+        store.save([project.clone()]).unwrap();
+        assert!(
+            !fs::read_to_string(&store.path)
+                .unwrap()
+                .contains("worktree_names")
+        );
+        assert_eq!(store.load().unwrap(), [project]);
         store.save([]).unwrap();
         assert!(store.load().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_relative_paths_and_duplicate_repositories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store {
+            path: tmp.path().join("projects.json"),
+        };
+        for contents in [
+            r#"[{"anchor":"relative","common_dir":"/repo/.git"}]"#,
+            r#"[{"anchor":"/a","common_dir":"/repo/.git"},{"anchor":"/b","common_dir":"/repo/.git"}]"#,
+        ] {
+            fs::write(&store.path, contents).unwrap();
+            assert!(store.load().is_err(), "{contents}");
+            assert_eq!(fs::read_to_string(&store.path).unwrap(), contents);
+        }
     }
 
     #[test]
