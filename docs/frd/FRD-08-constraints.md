@@ -11,6 +11,7 @@
 | NFR-05 | Must | The app never modifies Git state (no add, remove or prune), user configs, or tmux sessions other than its own name migration. | `deduplicates_linked_checkouts_and_persists_anchor_replacement` (forget leaves Git intact); Manual (code review) | Implemented |
 | NFR-06 | Must | Only HTTPS URLs are passed to the OS opener. | `rejects_unsafe_or_mismatched_pull_request_urls` | Implemented |
 | NFR-07 | Must | `cargo fmt --check`, `cargo clippy --all-targets -D warnings` and `cargo test` pass. | CI command set in [README](README.md#how-to-verify) | Implemented |
+| NFR-08 | Should | Typing and scrolling in the embedded terminal feel as immediate as standalone Alacritty. The draw loop does no per-cell parsing (palette colors are resolved once per theme), ASCII cells use basic text shaping, a burst of PTY output costs one grid sync instead of one per wakeup, and the PTY is resized only when the font changes. Dependencies are optimized in dev builds. | `named_colors_resolve_from_the_palette_without_reparsing`, `extended_indexed_colors_use_the_xterm_cube_and_gray_ramp`, `shapes_ascii_cells_basically_and_falls_back_for_other_glyphs`, `bursts_of_wakeups_become_one_redraw_after_other_events` (run with `cargo test --locked -p iced_term`); Manual: hold a key and trackpad-scroll a long `git log` in `cargo run --locked`, and confirm there is no visible lag versus Alacritty | Implemented |
 
 ## Deferred (Won't yet)
 

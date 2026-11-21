@@ -433,6 +433,17 @@ fn draw_cursor_stroke(
     }
 }
 
+// Patch: each cell is shaped as its own text run. Advanced shaping adds font
+// fallback and complex-script support that printable ASCII never needs, and a
+// lone character has no ligatures. Basic shaping keeps cache misses cheap.
+fn cell_shaping(c: char) -> Shaping {
+    if c.is_ascii_graphic() {
+        Shaping::Basic
+    } else {
+        Shaping::Advanced
+    }
+}
+
 fn grid_layout(layout: iced_core::Layout<'_>) -> iced_core::Layout<'_> {
     layout.children().next().unwrap_or(layout)
 }
@@ -705,7 +716,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                         color: fg,
                         align_x: Alignment::Center,
                         align_y: Vertical::Center,
-                        shaping: Shaping::Advanced,
+                        shaping: cell_shaping(indexed.c),
                         line_height: LineHeight::Relative(font_scale_factor),
                         ..Default::default()
                     };
@@ -963,6 +974,15 @@ mod tests {
     fn centers_retina_grid_without_rounding_to_logical_pixels() {
         assert_eq!(super::center_grid(792.0, 7.5, 2.0), (787.5, 2.0));
         assert_eq!(super::center_grid(50.5, 16.5, 2.0), (49.5, 0.5));
+    }
+
+    #[test]
+    fn shapes_ascii_cells_basically_and_falls_back_for_other_glyphs() {
+        assert_eq!(super::cell_shaping('a'), Shaping::Basic);
+        assert_eq!(super::cell_shaping('~'), Shaping::Basic);
+        assert_eq!(super::cell_shaping('é'), Shaping::Advanced);
+        assert_eq!(super::cell_shaping('\u{e0b0}'), Shaping::Advanced);
+        assert_eq!(super::cell_shaping('漢'), Shaping::Advanced);
     }
 
     use super::*;

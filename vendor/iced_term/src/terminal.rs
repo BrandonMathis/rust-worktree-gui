@@ -45,7 +45,7 @@ impl Terminal {
         let theme = Theme::new(settings.theme);
         let font = TermFont::new(settings.font);
 
-        Ok(Self {
+        let mut terminal = Self {
             id,
             widget_id: iced::widget::Id::unique(),
             font,
@@ -58,7 +58,12 @@ impl Terminal {
                 settings.backend,
             )?,
             backend_event_rx: Arc::new(Mutex::new(backend_event_rx)),
-        })
+        };
+        // Give the backend real cell metrics before the first event, as the
+        // per-command font sync used to.
+        terminal.sync_font();
+        terminal.backend.sync();
+        Ok(terminal)
     }
 
     pub fn widget_id(&self) -> &iced::widget::Id {
@@ -83,6 +88,7 @@ impl Terminal {
             },
             Command::ChangeFont(font_settings) => {
                 self.font = TermFont::new(font_settings);
+                self.sync_font();
             },
             Command::AddBindings(bindings) => {
                 self.bindings.add_bindings(bindings);
@@ -92,14 +98,12 @@ impl Terminal {
             },
         };
 
-        self.sync_and_redraw();
-        action
-    }
-
-    fn sync_and_redraw(&mut self) {
-        self.sync_font();
+        // Patch: upstream re-measured the font and resized the PTY here on
+        // every command, so each keystroke and PTY wakeup also sent a resize
+        // to the PTY thread. Only a font change can alter the cell metrics.
         self.backend.sync();
         self.redraw();
+        action
     }
 
     fn sync_font(&mut self) {
@@ -136,16 +140,24 @@ fn terminal_subscription_stream(
             let mut event_receiver = event_receiver.lock().await;
             match event_receiver.recv().await {
                 Some(event) => {
-                    if let AlacrittyEvent::Exit = event {
-                        shutdown = true
-                    };
+                    // Patch: drain whatever else is already queued so a burst of
+                    // output costs one grid sync and redraw, not one per wakeup.
+                    let mut batch = vec![event];
+                    while let Ok(next) = event_receiver.try_recv() {
+                        batch.push(next);
+                    }
+                    for event in coalesce_wakeups(batch) {
+                        if let AlacrittyEvent::Exit = event {
+                            shutdown = true
+                        };
 
-                    output
-                        .send(Event::BackendCall(id, backend::Command::ProcessAlacrittyEvent(event)))
-                        .await
-                        .unwrap_or_else(|_| {
-                            panic!("iced_term stream {}: sending BackendEventReceived event is failed", id)
-                        });
+                        output
+                            .send(Event::BackendCall(id, backend::Command::ProcessAlacrittyEvent(event)))
+                            .await
+                            .unwrap_or_else(|_| {
+                                panic!("iced_term stream {}: sending BackendEventReceived event is failed", id)
+                            });
+                    }
                 },
                 None => {
                     if !shutdown {
@@ -156,4 +168,52 @@ fn terminal_subscription_stream(
         }
     })
     .boxed()
+}
+
+/// Keeps every event in order but collapses repeated `Wakeup`s (which only
+/// mean "the grid changed, redraw") into a single one at the end of the batch.
+fn coalesce_wakeups(batch: Vec<AlacrittyEvent>) -> Vec<AlacrittyEvent> {
+    let mut woke = false;
+    let mut events: Vec<AlacrittyEvent> = batch
+        .into_iter()
+        .filter(|event| {
+            let wakeup = matches!(event, AlacrittyEvent::Wakeup);
+            woke |= wakeup;
+            !wakeup
+        })
+        .collect();
+    if woke {
+        events.push(AlacrittyEvent::Wakeup);
+    }
+    events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bursts_of_wakeups_become_one_redraw_after_other_events() {
+        let events = coalesce_wakeups(vec![
+            AlacrittyEvent::Wakeup,
+            AlacrittyEvent::Bell,
+            AlacrittyEvent::Wakeup,
+            AlacrittyEvent::Title("t".into()),
+            AlacrittyEvent::Wakeup,
+        ]);
+        assert_eq!(events.len(), 3);
+        assert!(matches!(events[0], AlacrittyEvent::Bell));
+        assert!(matches!(events[1], AlacrittyEvent::Title(ref t) if t == "t"));
+        assert!(matches!(events[2], AlacrittyEvent::Wakeup));
+    }
+
+    #[test]
+    fn batches_without_wakeups_are_unchanged() {
+        let events =
+            coalesce_wakeups(vec![AlacrittyEvent::Bell, AlacrittyEvent::Exit]);
+        assert!(matches!(
+            events[..],
+            [AlacrittyEvent::Bell, AlacrittyEvent::Exit]
+        ));
+    }
 }

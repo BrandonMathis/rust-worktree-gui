@@ -29,6 +29,16 @@ There are no Critical or High findings. Security is sound: subprocesses use argu
 | L9 | `tmux.rs` | tmux 3.5 is required but never checked. An old tmux fails with only "exited with status 1". | Check `tmux -V` once and show upgrade guidance. |
 | L10 | tests | The TRM-02 test re-sends `Reconnect` instead of selecting the worktree a second time. PR-04's timeout, PRJ-09's atomicity and ACT-02's tmux pane-directory path aren't automated. The FRDs now mark these as manual or partial. | Add an injectable timeout, and assert that a second `SelectWorktree` adds no connection. |
 
+## Terminal performance (2026-11-21)
+
+A `sample` profile of the debug build while typing showed the main thread about 72% busy. GPU text preparation and the canvas rebuild in `vendor/iced_term` dominated, followed by palette hex parsing in `Theme::get_color`. NFR-08 fixes the low-hanging causes. Remaining follow-ups:
+
+| # | Size | Change |
+| --- | --- | --- |
+| P1 | M | `TerminalView::draw` emits one `fill_text` (and one `String`) per cell, so a 120×40 grid prepares about 4,800 text items per frame. Emitting one run per line and style would cut most of the remaining cost, but needs care to keep the grid aligned to Alacritty's cell metrics. |
+| P2 | S | `Backend::sync` clones the whole visible grid on every event. A damage-aware sync, or borrowing the grid under the lock during `draw`, would avoid the copy. |
+| P3 | S | `Cargo.toml` lists only `tiny-skia`, but `vendor/iced_term` depends on iced with default features, so `wgpu` is enabled and is the renderer actually used. Set `default-features = false` there and name `wgpu` explicitly so the manifest says what runs. |
+
 ## Refactors for extensibility
 
 | # | Size | Change |
