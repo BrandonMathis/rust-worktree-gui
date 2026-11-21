@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3d52"/>
+      <stop offset="1" stop-color="#1e1f29"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#343746"/>
+      <stop offset="1" stop-color="#282a36"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS icon grid: 824px rounded square centred on a 1024 canvas -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+
+  <g transform="translate(33 19)">
+  <!-- branches leave the trunk and run into their worktree terminals -->
+  <g fill="none" stroke-width="34" stroke-linecap="round">
+    <path d="M300 560 C300 380 400 330 520 330" stroke="#ff79c6"/>
+    <path d="M300 780 C300 690 400 650 520 650" stroke="#8be9fd"/>
+    <path d="M300 800 L300 260" stroke="#bd93f9"/>
+  </g>
+
+  <!-- commits on the trunk -->
+  <g stroke="#bd93f9" stroke-width="26" fill="#282a36">
+    <circle cx="300" cy="250" r="44"/>
+    <circle cx="300" cy="560" r="44"/>
+    <circle cx="300" cy="780" r="44"/>
+  </g>
+
+  <!-- worktree: terminal windows -->
+  <g>
+    <rect x="510" y="230" width="330" height="200" rx="28" fill="url(#card)" stroke="#ff79c6" stroke-width="20"/>
+    <path d="M560 290 L610 330 L560 370" fill="none" stroke="#50fa7b" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="635" y="356" width="80" height="20" rx="6" fill="#f8f8f2"/>
+
+    <rect x="510" y="550" width="330" height="200" rx="28" fill="url(#card)" stroke="#8be9fd" stroke-width="20"/>
+    <path d="M560 610 L610 650 L560 690" fill="none" stroke="#50fa7b" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="635" y="676" width="80" height="20" rx="6" fill="#f8f8f2"/>
+  </g>
+  </g>
+</svg>
