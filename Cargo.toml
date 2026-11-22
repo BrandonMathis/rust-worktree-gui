@@ -28,6 +28,13 @@ raw-window-handle = "0.6"
 [patch.crates-io]
 iced_term = { path = "vendor/iced_term" }
 
+# Optimize dependencies even in dev builds. The terminal draw loop (iced, wgpu,
+# cosmic-text, alacritty_terminal and the vendored iced_term) is too slow
+# unoptimized for typing and scrolling to feel instant. This crate stays at
+# opt-level 0, so incremental rebuilds remain fast.
+[profile.dev.package."*"]
+opt-level = 3
+
 # Lints checked by `cargo clippy` locally and in CI (`.github/workflows/ci.yml`).
 # Panicking helpers are denied in app code because errors must reach the user
 # as a notice, never crash the app. `clippy.toml` allows them inside tests.
