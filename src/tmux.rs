@@ -112,8 +112,14 @@ impl SessionNames {
         hash.update(b"\0");
         hash.update(worktree.as_os_str().as_bytes());
         let digest = hash.finalize();
+        // sha2 0.11's output array doesn't implement `{:x}`, so hex-encode the
+        // bytes ourselves. The legacy name keeps the first 16 bytes (32 hex digits).
+        let hex: String = digest[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         Self {
-            legacy: format!("wt-{digest:x}")[..35].to_owned(),
+            legacy: format!("wt-{hex}"),
         }
     }
 
@@ -222,6 +228,15 @@ mod tests {
             name,
             SessionNames::new(&git::discover(&linked).unwrap().common_dir, &linked).short()
         );
+    }
+
+    #[test]
+    fn session_names_stay_stable_so_running_sessions_are_not_orphaned() {
+        // Expected values come from:
+        // printf 'worktree-browser.v1\0/repo/.git\0/repo/feature' | shasum -a 256
+        let names = SessionNames::new(Path::new("/repo/.git"), Path::new("/repo/feature"));
+        assert_eq!(names.legacy, "wt-f8f7d8e15bfd836aed6b1cf1bedc5f44");
+        assert_eq!(names.short(), "wt-f8f7d8e15b");
     }
 
     #[test]
