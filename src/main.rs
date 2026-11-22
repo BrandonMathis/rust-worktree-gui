@@ -2,6 +2,7 @@ mod actions;
 mod app;
 #[cfg(feature = "capture")]
 mod capture;
+mod color_wheel;
 mod config;
 mod create;
 mod git;
@@ -9,9 +10,11 @@ mod icons;
 mod pull_request;
 mod quit;
 mod row_menu;
+mod settings;
 mod style;
 mod terminal;
 mod terminal_config;
+mod theme;
 mod tmux;
 
 #[cfg(test)]
@@ -35,8 +38,9 @@ fn main() -> iced::Result {
     .default_font(font)
     .title("Worktree Browser")
     .subscription(app::App::subscription)
-    .theme(iced::Theme::Dracula)
-    .style(|_, theme| style::application(theme))
+    // Both read the app's palette, so theme edits apply to the whole window live.
+    .theme(app::App::theme)
+    .style(|app, _| style::application(app.palette()))
     .window(iced::window::Settings {
         size,
         transparent: true,

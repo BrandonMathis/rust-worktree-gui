@@ -38,9 +38,14 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - If the selected worktree's branch has an **open** GitHub pull request, a **PR #N** button appears in the header. Clicking it opens the PR in your browser. This uses your existing `gh` login, and the button stays hidden if anything goes wrong.
 
 **Look and layout**
-- Dark Dracula theme, 3-pixel rounded corners, translucent "glass" panels with macOS blur.
+- Dark Dracula theme by default, 3-pixel rounded corners, translucent "glass" panels with macOS blur.
 - Compact by design: a single-row header, a narrow sidebar with names that never wrap (hover for details), and a terminal with no padding.
 - The sidebar can be hidden for a full-width terminal. While it's hidden, hovering the toggle shows the sidebar as a temporary overlay.
+
+**Settings and theme**
+- A gear at the bottom left of the sidebar opens a full-window Settings screen. Its first page, **Theme**, edits the app's eleven Dracula palette colors with a color wheel, a brightness slider and hex fields, and previews every change live.
+- A preset menu offers Dracula, Alucard (light) and the Dracula Pro family (Pro, Blade, Buffy, Lincoln, Morbius, Van Helsing).
+- **Save & Confirm** keeps the theme across launches; **Cancel** or Escape discards the changes. The terminal keeps your Alacritty colors.
 
 ## Not in scope (yet)
 
@@ -50,19 +55,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 
 ## Requirements and verification
 
-| Area | Requirements | Covered by automated tests |
-| --- | --- | --- |
-| Projects | 9 | 9 |
-| Worktrees | 8 | 8 |
-| Terminal sessions | 12 | 10 |
-| Terminal preferences | 9 | 6 |
-| Actions and rename | 8 | 8 |
-| Pull requests | 6 | 6 |
-| Interface | 11 | 5 |
-| Constraints | 7 | 5 |
-| **Total** | **70** | **57** |
-
-The 13 requirements without automated tests are about visual rendering or OS integration, such as blur, tooltips, font matching and Finder opening. They're checked manually; each FRD document marks them **Manual** with the check to perform.
+Each requirement in [docs/frd/](frd/README.md) names the automated test that verifies it. Requirements that can't be unit-tested, such as visual rendering or OS integration (blur, tooltips, font matching, Finder opening), are marked **Manual**, with the check to perform.
 
 ## Needs
 

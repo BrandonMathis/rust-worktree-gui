@@ -9,7 +9,7 @@ autotests = false
 
 [dependencies]
 directories = "6"
-iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "svg", "crisp", "tokio", "x11", "wayland"] }
+iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "svg", "canvas", "crisp", "tokio", "x11", "wayland"] }
 iced_term = "=0.8.0"
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
@@ -20,7 +20,7 @@ tokio = { version = "1", features = ["process", "rt", "time"] }
 toml = "0.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-crossfont = "=0.8.1"
+crossfont = "=0.9.0"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSMenu", "NSMenuItem", "NSView", "NSWindow"] }
 raw-window-handle = "0.6"

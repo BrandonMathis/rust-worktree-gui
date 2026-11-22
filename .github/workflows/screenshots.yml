@@ -15,14 +15,17 @@ on:
     paths:
       - src/app.rs
       - src/capture.rs
+      - src/color_wheel.rs
       - src/create.rs
       - src/icons.rs
       - src/main.rs
       - src/quit.rs
       - src/row_menu.rs
+      - src/settings.rs
       - src/style.rs
       - src/terminal.rs
       - src/terminal_config.rs
+      - src/theme.rs
       - vendor/iced_term/**
       - assets/**
       - Cargo.toml
@@ -50,7 +53,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -63,7 +66,7 @@ jobs:
       - run: cargo build --locked --features capture
       - name: Capture screenshots
         run: ruby script/capture/capture.rb --out screenshots
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: screenshots
@@ -88,10 +91,10 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: screenshots
           path: screenshots

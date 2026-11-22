@@ -68,9 +68,7 @@ impl From<StoredPath> for PathBuf {
 
 impl Store {
     pub fn open() -> Result<(Self, Vec<ProjectBookmark>), String> {
-        let dirs = ProjectDirs::from_path("Worktree Browser".into())
-            .ok_or("Could not locate the Application Support directory")?;
-        Self::open_path(dirs.config_dir().join("projects.json"))
+        Self::open_path(support_dir()?.join("projects.json"))
     }
 
     pub(crate) fn open_path(path: PathBuf) -> Result<(Self, Vec<ProjectBookmark>), String> {
@@ -132,21 +130,31 @@ impl Store {
             })
             .collect();
 
-        let error =
-            |err: &dyn std::fmt::Display| format!("Could not save {}: {err}", self.path.display());
-        let parent = self
-            .path
-            .parent()
-            .ok_or_else(|| error(&"the path has no parent directory"))?;
-        fs::create_dir_all(parent).map_err(|err| error(&err))?;
-        // Replacing the file atomically avoids losing the bookmarks on a failed write.
-        let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|err| error(&err))?;
-        serde_json::to_writer_pretty(file.as_file_mut(), &bookmarks).map_err(|err| error(&err))?;
-        file.write_all(b"\n").map_err(|err| error(&err))?;
-        file.as_file().sync_all().map_err(|err| error(&err))?;
-        file.persist(&self.path).map_err(|err| error(&err))?;
-        Ok(())
+        write_json(&self.path, &bookmarks)
     }
+}
+
+/// The app's folder in `~/Library/Application Support`, shared by every settings file.
+pub(crate) fn support_dir() -> Result<PathBuf, String> {
+    let dirs = ProjectDirs::from_path("Worktree Browser".into())
+        .ok_or("Could not locate the Application Support directory")?;
+    Ok(dirs.config_dir().to_path_buf())
+}
+
+/// Writes `value` as pretty JSON. The file is replaced atomically, so a failed
+/// write never loses the previous contents.
+pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    let error = |err: &dyn std::fmt::Display| format!("Could not save {}: {err}", path.display());
+    let parent = path
+        .parent()
+        .ok_or_else(|| error(&"the path has no parent directory"))?;
+    fs::create_dir_all(parent).map_err(|err| error(&err))?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|err| error(&err))?;
+    serde_json::to_writer_pretty(file.as_file_mut(), value).map_err(|err| error(&err))?;
+    file.write_all(b"\n").map_err(|err| error(&err))?;
+    file.as_file().sync_all().map_err(|err| error(&err))?;
+    file.persist(path).map_err(|err| error(&err))?;
+    Ok(())
 }
 
 #[cfg(test)]
