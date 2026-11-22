@@ -6,7 +6,7 @@ use crate::{
     icons,
     pull_request::{self, PullRequest},
     quit, row_menu, settings,
-    style::{self, Button, Panel},
+    style::{self, Button, Corners, Panel},
     terminal::Console,
     terminal_config::Preferences,
     theme::{self, Palette},
@@ -47,6 +47,8 @@ pub struct App {
     console: ConsoleState,
     terminal_preferences: Preferences,
     window_scale: f32,
+    /// Rounding for panels in the window's bottom corners (macOS only).
+    window_corners: Corners,
     quit_pending: bool,
     sidebar_visible: bool,
     sidebar_preview: SidebarPreview,
@@ -274,8 +276,12 @@ impl WorktreeIcon {
 }
 
 impl App {
-    pub fn new(preferences: Result<Preferences, String>) -> (Self, Task<Message>) {
+    pub fn new(
+        preferences: Result<Preferences, String>,
+        window_radius: f32,
+    ) -> (Self, Task<Message>) {
         let (mut app, task) = Self::from_bookmarks(Store::open());
+        app.window_corners = Corners::window(window_radius);
         match preferences {
             Ok(preferences) => app.terminal_preferences = preferences,
             Err(error) if app.notice.is_none() => app.notice = Some(error),
@@ -314,6 +320,7 @@ impl App {
             console: ConsoleState::default(),
             terminal_preferences: Preferences::default(),
             window_scale: 1.0,
+            window_corners: Corners::NONE,
             quit_pending: false,
             sidebar_visible: true,
             sidebar_preview: SidebarPreview::default(),
@@ -1160,11 +1167,18 @@ impl App {
 
     pub fn view(&self) -> Element<'_, Message> {
         let p = self.palette();
+        // Whatever sits along the bottom edge takes the window's corner rounding:
+        // the notice bar when shown, otherwise the content above it.
+        let corners = if self.notice.is_some() {
+            Corners::NONE
+        } else {
+            self.window_corners
+        };
         let content = match &self.settings {
             // Settings replaces the whole window rather than floating over it,
             // so the terminal underneath can't receive keystrokes meant for it.
-            Some(draft) => draft.view().map(Message::Settings),
-            None => self.main_layout(),
+            Some(draft) => draft.view(corners).map(Message::Settings),
+            None => self.main_layout(corners),
         };
         let mut page = column![content].spacing(4);
         if let Some(notice) = &self.notice {
@@ -1181,27 +1195,34 @@ impl App {
                 )
                 .padding(10)
                 .width(Fill)
-                .style(style::panel(p, Panel::Glass)),
+                .style(style::panel_in(p, Panel::Glass, self.window_corners)),
             );
         }
-        container(page).padding(4).width(Fill).height(Fill).into()
+        container(page)
+            .padding(style::WINDOW_GAP)
+            .width(Fill)
+            .height(Fill)
+            .into()
     }
 
     /// The sidebar and workspace, with the sidebar preview overlay.
-    fn main_layout(&self) -> Element<'_, Message> {
+    fn main_layout(&self, corners: Corners) -> Element<'_, Message> {
         // Keep the workspace in the same widget slot when toggling the sidebar.
-        let sidebar = if self.sidebar_visible {
-            self.sidebar()
+        let (sidebar, workspace) = if self.sidebar_visible {
+            (
+                self.sidebar(corners.left()),
+                self.workspace(corners.right()),
+            )
         } else {
-            Space::new().into()
+            (Space::new().into(), self.workspace(corners))
         };
-        let workspace = row![sidebar, self.workspace()]
+        let workspace = row![sidebar, workspace]
             .spacing(if self.sidebar_visible { 4 } else { 0 })
             .height(Fill);
         let mut workspace = stack![workspace];
         if !self.sidebar_visible && self.sidebar_preview.visible {
             let panel = opaque(
-                mouse_area(self.sidebar())
+                mouse_area(self.sidebar(corners.left()))
                     .on_enter(Message::SidebarHover(SidebarZone::Panel, true))
                     .on_exit(Message::SidebarHover(SidebarZone::Panel, false)),
             );
@@ -1211,7 +1232,7 @@ impl App {
         workspace.into()
     }
 
-    fn sidebar(&self) -> Element<'_, Message> {
+    fn sidebar(&self, corners: Corners) -> Element<'_, Message> {
         let p = self.palette();
         let refreshing = self.projects.iter().any(|p| p.refresh_id.is_some());
         let project_menu = if self.can_start_creation() {
@@ -1402,11 +1423,15 @@ impl App {
         .padding(6)
         .width(202)
         .height(Fill)
-        .style(if self.sidebar_visible {
-            style::panel(p, Panel::Glass)
-        } else {
-            style::panel(p, Panel::Floating)
-        })
+        .style(style::panel_in(
+            p,
+            if self.sidebar_visible {
+                Panel::Glass
+            } else {
+                Panel::Floating
+            },
+            corners,
+        ))
         .into()
     }
 
@@ -1427,10 +1452,10 @@ impl App {
         }
     }
 
-    fn workspace(&self) -> Element<'_, Message> {
+    fn workspace(&self, corners: Corners) -> Element<'_, Message> {
         let p = self.palette();
         if let Some(draft) = &self.creation {
-            return self.creation_form(draft);
+            return self.creation_form(draft, corners);
         }
         match self.selected() {
             Some((project, selection)) => match selection
@@ -1438,8 +1463,8 @@ impl App {
                 .as_deref()
                 .and_then(|p| project.worktree(p))
             {
-                Some(tree) => self.worktree_workspace(project, tree),
-                None => self.project_status(project),
+                Some(tree) => self.worktree_workspace(project, tree, corners),
+                None => self.project_status(project, corners),
             },
             None => container(
                 column![
@@ -1468,12 +1493,16 @@ impl App {
             .padding(12)
             .width(Fill)
             .height(Fill)
-            .style(style::panel(p, Panel::Glass))
+            .style(style::panel_in(p, Panel::Glass, corners))
             .into(),
         }
     }
 
-    fn creation_form<'a>(&'a self, draft: &'a create::Draft) -> Element<'a, Message> {
+    fn creation_form<'a>(
+        &'a self,
+        draft: &'a create::Draft,
+        corners: Corners,
+    ) -> Element<'a, Message> {
         let p = self.palette();
         let worktree = matches!(draft.kind, create::Kind::Worktree { .. });
         let title = if worktree {
@@ -1583,11 +1612,11 @@ impl App {
         ))
         .width(Fill)
         .height(Fill)
-        .style(style::panel(p, Panel::Glass))
+        .style(style::panel_in(p, Panel::Glass, corners))
         .into()
     }
 
-    fn project_status<'a>(&self, project: &'a Project) -> Element<'a, Message> {
+    fn project_status<'a>(&self, project: &'a Project, corners: Corners) -> Element<'a, Message> {
         let p = self.palette();
         let message = match &project.inventory {
             Some(Err(error)) => column![
@@ -1630,7 +1659,7 @@ impl App {
         ))
         .width(Fill)
         .height(Fill)
-        .style(style::panel(p, Panel::Glass))
+        .style(style::panel_in(p, Panel::Glass, corners))
         .into()
     }
 
@@ -1680,6 +1709,7 @@ impl App {
         &'a self,
         project: &'a Project,
         tree: &'a Worktree,
+        corners: Corners,
     ) -> Element<'a, Message> {
         let p = self.palette();
         let name = project.worktree_name(tree);
@@ -1844,7 +1874,7 @@ impl App {
             container(body)
                 .width(Fill)
                 .height(Fill)
-                .style(style::panel(p, Panel::Console)),
+                .style(style::panel_in(p, Panel::Console, corners)),
         ]
         .spacing(2)
         .into()
