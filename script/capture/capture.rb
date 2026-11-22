@@ -312,7 +312,7 @@ def states(fixtures)
         tmux.type(bottom, "git status --short && cargo test")
         tmux.type(pane, "vim src/auth/tokens.rs")
         tmux.wait_for_text(bottom, "test result")
-        tmux.wait_for_text(pane, "pub fn refresh")
+        tmux.wait_for_text(pane, "pub struct Token")
       end
     },
     {
