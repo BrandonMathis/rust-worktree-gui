@@ -1,0 +1,107 @@
+# Security checks. See SECURITY.md for what each one guards against.
+#
+# - RustSec audit: `cargo deny check advisories` every day, because new
+#   advisories land without any change to this repository. A failure opens
+#   an issue labelled `security-advisory`. (PRs already run the full
+#   `cargo deny check` in ci.yml.)
+# - Dependency review: blocks a PR that adds a dependency with a known
+#   vulnerability, and warns on low OpenSSF Scorecard ratings.
+# - CodeQL: static analysis of the Rust code for security bugs.
+# - zizmor: audits these workflow files for injection, credential leaks and
+#   unpinned actions.
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 14 * * *" # daily 14:23 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: RustSec audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
+        with:
+          command: check advisories
+      - name: Open or update the issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo 'The daily `cargo deny check advisories` run failed: a dependency in Cargo.lock has a new RustSec advisory (vulnerable, unmaintained, unsound or yanked).'
+            echo
+            echo 'See the failing run for the advisory IDs. If a fix exists, Dependabot opens a security update PR on its own. Otherwise upgrade the dependency chain, or, only for an accepted risk, add the ID to `[advisories] ignore` in deny.toml with a reason.'
+          } > advisory.md
+          .github/scripts/upsert-issue.sh open security-advisory "New RustSec advisory affects Cargo.lock" advisory.md
+      - name: Close the issue
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: .github/scripts/upsert-issue.sh resolve security-advisory
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: low
+          show-openssf-scorecard: true
+          warn-on-openssf-scorecard-level: 3
+
+  codeql:
+    name: CodeQL
+    # Analyzes on macOS, the only platform the app builds for.
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          category: /language:rust
+
+  zizmor:
+    name: Workflow audit
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1

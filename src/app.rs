@@ -226,6 +226,42 @@ impl Project {
     fn pull_request(&self, path: &Path) -> Option<&PullRequest> {
         self.pull_requests.get(path)?.pr.as_ref()
     }
+
+    /// Picks the single sidebar icon for `tree`. Precedence: unavailable, then
+    /// the main checkout, then the PR state, then a plain worktree.
+    fn worktree_icon(&self, tree: &Worktree) -> WorktreeIcon {
+        // `git worktree list` always lists the main worktree first.
+        let is_main = self.worktrees().first().map(|main| &main.path) == Some(&tree.path);
+        if tree.unavailable_reason().is_some() {
+            WorktreeIcon::Unavailable
+        } else if is_main {
+            WorktreeIcon::Main
+        } else if let Some(pr) = self.pull_request(&tree.path) {
+            WorktreeIcon::PullRequest(pr.status)
+        } else {
+            WorktreeIcon::Worktree
+        }
+    }
+}
+
+/// The one status icon shown left of each worktree in the sidebar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorktreeIcon {
+    Unavailable,
+    Main,
+    Worktree,
+    PullRequest(pull_request::Status),
+}
+
+impl WorktreeIcon {
+    fn view<'a>(self, size: u32) -> Svg<'a> {
+        match self {
+            Self::Unavailable => icons::warning(size, style::RED),
+            Self::Main => icons::home(size, style::ORANGE),
+            Self::Worktree => icons::branch(size, style::CYAN),
+            Self::PullRequest(status) => icons::pr_status(size, status),
+        }
+    }
 }
 
 impl App {
@@ -1144,13 +1180,32 @@ impl App {
                 .color(style::MUTED),
             );
         }
+        // Struct update syntax (`..base`) copies the user's font family and only
+        // changes the weight, like `{ ...font, weight: 'bold' }` in JS.
+        let bold = iced::Font {
+            weight: iced::font::Weight::Bold,
+            ..self.terminal_preferences.font.font_type
+        };
         for project in &self.projects {
             let selection = self.selection.as_ref().filter(|s| s.project == project.id);
-            let arrow = if project.expanded { "▾" } else { "▸" };
-            let name = format!("{arrow}  {}", project.name());
+            let caret = if project.expanded {
+                icons::chevron_down(15, style::TEXT)
+            } else {
+                icons::chevron_right(15, style::TEXT)
+            };
+            let name = project.name().replace(['\n', '\r'], " ");
             let project_button = button(
                 row![
-                    single_line(name.replace(['\n', '\r'], " "), 13),
+                    caret,
+                    // Like `single_line`, but bold so projects stand apart from worktrees.
+                    container(
+                        text(name)
+                            .size(13)
+                            .font(bold)
+                            .wrapping(iced::widget::text::Wrapping::None)
+                    )
+                    .clip(true)
+                    .width(Fill),
                     text(if matches!(project.inventory, Some(Err(_))) {
                         "!"
                     } else {
@@ -1159,15 +1214,16 @@ impl App {
                     .color(style::RED),
                     Space::new().width(22),
                 ]
+                .spacing(4)
                 .align_y(Center),
             )
             .width(Fill)
-            .padding([4, 6])
+            .padding([5, 4])
             .on_press(Message::ToggleProject(project.id))
             .style(if selection.is_some() {
                 style::secondary
             } else {
-                style::nav
+                style::project
             });
             list = list.push(with_row_menu(
                 project_button,
@@ -1196,15 +1252,9 @@ impl App {
             for tree in project.worktrees() {
                 let active =
                     selection.and_then(|s| s.worktree.as_deref()) == Some(tree.path.as_path());
-                let available = tree.unavailable_reason().is_none();
                 let pr = project.pull_request(&tree.path);
-                let mut label = row![
-                    if !available { icons::warning(13, style::RED) }
-                    else if active && matches!(&self.console, ConsoleState::Attached(console) if console.is_open()) {
-                        icons::connected(13, style::GREEN)
-                    } else if active && matches!(&self.console, ConsoleState::Failed(_)) {
-                        icons::warning(13, style::RED)
-                    } else { icons::branch(13, style::PURPLE) },
+                let label = row![
+                    project.worktree_icon(tree).view(13),
                     single_line(project.worktree_name(tree), 12),
                 ]
                 .spacing(5)
@@ -1217,7 +1267,6 @@ impl App {
                 ]
                 .spacing(3);
                 if let Some(pr) = pr {
-                    label = label.push(icons::pr_status(13, pr.status));
                     details = details.push(text(pr.label()).size(11));
                 }
                 let label = tooltip(
@@ -1248,7 +1297,12 @@ impl App {
                     children = children.push(editor);
                 }
             }
-            list = list.push(container(children).padding([1, 5]).width(Fill));
+            // Indent worktrees under their project so the hierarchy reads at a glance.
+            list = list.push(
+                container(children)
+                    .padding(iced::padding::top(1).bottom(4).left(12))
+                    .width(Fill),
+            );
         }
         container(column![toolbar, scrollable(list.width(Fill)).height(Fill),].spacing(5))
             .padding(6)
@@ -2201,6 +2255,46 @@ mod tests {
             Some(PullRequest::for_test(9)),
         ));
         assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 9);
+    }
+
+    #[test]
+    fn sidebar_icon_marks_the_main_checkout_pr_state_and_unavailable_worktrees() {
+        let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
+        let icon = |app: &App, path: &Path| {
+            let project = &app.projects[0];
+            project.worktree_icon(project.worktree(path).unwrap())
+        };
+        assert_eq!(icon(&app, &root), WorktreeIcon::Main);
+        assert_eq!(icon(&app, &linked), WorktreeIcon::Worktree);
+
+        // A PR on the main checkout doesn't replace its unique icon.
+        let _ = app.update(Message::SelectWorktree(id, root.clone()));
+        let request = app.pr_request_id;
+        let _ = app.update(Message::PullRequestFound(
+            id,
+            root.clone(),
+            request,
+            Some(PullRequest::for_test(3)),
+        ));
+        assert_eq!(icon(&app, &root), WorktreeIcon::Main);
+
+        let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+        let request = app.pr_request_id;
+        let _ = app.update(Message::PullRequestFound(
+            id,
+            linked.clone(),
+            request,
+            Some(PullRequest::for_test(4)),
+        ));
+        assert_eq!(
+            icon(&app, &linked),
+            WorktreeIcon::PullRequest(pull_request::Status::Open)
+        );
+
+        if let Some(Ok(trees)) = &mut app.projects[0].inventory {
+            trees[1].directory_exists = false;
+        }
+        assert_eq!(icon(&app, &linked), WorktreeIcon::Unavailable);
     }
 
     #[test]

@@ -50,18 +50,20 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: capture
       - run: brew install tmux
       - run: cargo build --locked --features capture
       - name: Capture screenshots
         run: ruby script/capture/capture.rb --out screenshots
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: screenshots
@@ -86,8 +88,10 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: screenshots
           path: screenshots
@@ -96,6 +100,8 @@ jobs:
         run: |
           set -euo pipefail
           dir="pr-$PR/${HEAD_SHA::7}"
+          # Checkout does not persist credentials, so authenticate this remote only.
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git fetch --depth=1 origin "$SCREENSHOT_BRANCH"; then
@@ -120,7 +126,7 @@ jobs:
           done
           # Pin the image URLs to this commit so later pushes can't change them.
           commit=$(git -C publish rev-parse HEAD)
-          echo "base=https://raw.githubusercontent.com/${{ github.repository }}/$commit/$dir" >> "$GITHUB_OUTPUT"
+          echo "base=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/$commit/$dir" >> "$GITHUB_OUTPUT"
       - name: Create or update the PR comment
         env:
           BASE_URL: ${{ steps.push.outputs.base }}
@@ -129,11 +135,11 @@ jobs:
           ruby script/capture/comment.rb screenshots "$BASE_URL" "$HEAD_SHA" "$RUN_URL" > comment.md
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
           marker='<!-- worktree-browser-screenshots -->'
-          ids=$(gh api --paginate "repos/${{ github.repository }}/issues/$PR/comments" \
+          ids=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/$PR/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id")
           id=${ids%%$'\n'*}
           if [ -n "$id" ]; then
-            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$id" -F body=@comment.md > /dev/null
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/$id" -F body=@comment.md > /dev/null
           else
             gh pr comment "$PR" --body-file comment.md
           fi

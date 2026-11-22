@@ -1,0 +1,70 @@
+# Dependabot policy. See SECURITY.md ("Dependency updates") for the reasoning.
+#
+# Two kinds of Dependabot pull requests exist:
+#
+# - Version updates (configured here, on a schedule). These open only for
+#   MINOR and MAJOR releases. Patch releases are never proposed on their own.
+#   A hijacked maintainer account usually ships malware as a quiet patch
+#   release, because `cargo update` and loose requirements pick patches up
+#   automatically. Skipping them shrinks that window.
+#
+# - Security updates (enabled in the repository settings, not here). These
+#   open as soon as a GitHub/RustSec advisory names a dependency in
+#   Cargo.lock, including when the fix is a patch release. GitHub documents
+#   that `allow.update-types` "only affects version updates, not security
+#   updates", so vetted CVE fixes still arrive.
+#
+# Do NOT express the patch rule as `ignore: update-types: semver-patch`.
+# `ignore` rules also apply to security updates and would block CVE fixes.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:17"
+    # Direct dependencies only. Transitive versions move when a direct
+    # dependency is bumped or a security update requires it.
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+    ignore:
+      # Vendored and patched in `vendor/iced_term` via `[patch.crates-io]`.
+      # Upgrading means re-vendoring and re-applying the patches by hand.
+      - dependency-name: iced_term
+    # Wait two weeks after a release before proposing it. Most malicious
+    # releases are reported and yanked within days. Cooldown never delays
+    # security updates.
+    cooldown:
+      default-days: 14
+      semver-major-days: 30
+      semver-minor-days: 14
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+
+  # Workflow actions are pinned to full commit SHAs (a moved tag can't change
+  # what runs). Dependabot bumps the SHA and its `# vX.Y.Z` comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:17"
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+    cooldown:
+      default-days: 14
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"

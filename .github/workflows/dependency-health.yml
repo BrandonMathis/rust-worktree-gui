@@ -1,0 +1,67 @@
+# Weekly dependency health report (scripts/dependency_health.rb).
+#
+# Flags direct dependencies that are majorly out of date (two or more breaking
+# releases behind, or one behind for 180+ days), yanked or apparently
+# abandoned, and a Rust toolchain pin that has fallen out of support. While
+# there are findings, one issue labelled `dependency-health` stays open and
+# gets a comment whenever the report changes. It closes itself once clean.
+name: Dependency health
+
+on:
+  schedule:
+    - cron: "41 13 * * 1" # Mondays 13:41 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/dependency_health.rb
+      - scripts/test/**
+      - .github/scripts/upsert-issue.sh
+      - .github/workflows/dependency-health.yml
+
+permissions: {}
+
+concurrency:
+  group: dependency-health-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with `.tool-versions`.
+  RUST_VERSION: 1.90.0
+
+jobs:
+  report:
+    name: Report
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Unit tests for the report rules
+        run: ruby scripts/test/dependency_health_test.rb
+      - name: Build the report
+        id: report
+        run: |
+          ruby scripts/dependency_health.rb --output dependency-health.md
+          cat dependency-health.md >> "$GITHUB_STEP_SUMMARY"
+      # Only scheduled and manual runs touch issues; pull requests just
+      # prove the script still works.
+      - name: Open or update the issue
+        if: github.event_name != 'pull_request' && steps.report.outputs.findings != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: .github/scripts/upsert-issue.sh open dependency-health "Dependencies are falling out of date or support" dependency-health.md
+      - name: Close the issue
+        if: github.event_name != 'pull_request' && steps.report.outputs.findings == '0' && steps.report.outputs.errors == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: .github/scripts/upsert-issue.sh resolve dependency-health

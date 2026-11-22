@@ -34,9 +34,11 @@ icon!(
     pr_closed,
     r#"<path d="M5 7v6m6-8 5 5m0-5-5 5"/><circle cx="5" cy="5" r="2"/><circle cx="5" cy="15" r="2"/>"#
 );
+// Drawn like a merge (the line bends into a middle-right circle) so it can't be
+// mistaken for `branch`, whose third circle sits top-right.
 icon!(
     pr_merged,
-    r#"<path d="M5 7v6m0-2c4 0 9-1 9-4"/><circle cx="5" cy="5" r="2"/><circle cx="5" cy="15" r="2"/><circle cx="14" cy="5" r="2"/>"#
+    r#"<path d="M5 6v8m0-8q0 4 8 4"/><circle cx="5" cy="4" r="2"/><circle cx="5" cy="16" r="2"/><circle cx="15" cy="10" r="2"/>"#
 );
 
 pub fn pr_status<'a>(size: u32, status: Status) -> Svg<'a> {
@@ -48,6 +50,13 @@ pub fn pr_status<'a>(size: u32, status: Status) -> Svg<'a> {
     }
 }
 
+// The main checkout (the repository directory itself, not a linked worktree).
+icon!(
+    home,
+    r#"<path d="M3 9.5 10 3.5l7 6M5 8v8.5h10V8M8.5 16.5V12h3v4.5"/>"#
+);
+icon!(chevron_right, r#"<path d="m7.5 4.5 5.5 5.5-5.5 5.5"/>"#);
+icon!(chevron_down, r#"<path d="m4.5 7.5 5.5 5.5 5.5-5.5"/>"#);
 icon!(folder, r#"<path d="M3 5h5l1.6 2H17v9H3z"/>"#);
 icon!(add, r#"<path d="M10 4v12M4 10h12"/>"#);
 icon!(
