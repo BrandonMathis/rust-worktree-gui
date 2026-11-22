@@ -16,6 +16,8 @@ cargo test --locked                                  # all tests; add a name to 
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
 cargo deny check                                     # advisories, licenses, sources (deny.toml)
 cargo llvm-cov --locked                              # coverage; CI enforces a line-coverage floor
+ruby scripts/dependency_health.rb                    # out-of-date / out-of-support report (network)
+ruby scripts/test/dependency_health_test.rb          # tests for that report
 ```
 
 Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
@@ -58,6 +60,15 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 - **UI:** dark Dracula theme, 3px rounded corners, compact. Don't add padding to the terminal pane, and don't let sidebar labels wrap. Check visual changes with a macOS screenshot (`screencapture`) at the default (1120×720) and minimum (820×440) window sizes.
 - Errors are user-facing `String`s shown in the notice bar. Never `unwrap` or `panic` on I/O or subprocess results outside tests.
 - Keep `pub` minimal. This is a single binary crate.
+
+## Dependencies and supply chain
+
+Read `SECURITY.md` before changing `.github/dependabot.yml`, `deny.toml` or a workflow.
+
+- Dependabot opens version PRs only for minor and major releases (`allow: update-types`). Patch releases arrive only as security updates. Never express this as an `ignore` on `semver-patch`: `ignore` also blocks security updates.
+- Pin GitHub Actions to a full commit SHA with a `# vX.Y.Z` comment, and pin tools that CI installs to a version. Give each workflow `permissions: {}` and grant per job. Use `persist-credentials: false` on checkout.
+- Add a crate only when it's needed. Prefer widely used crates with recent releases, and check that `cargo deny check` still passes. A new `[advisories] ignore` entry in `deny.toml` needs a `reason`.
+- Helper scripts are Ruby using only the standard library (`scripts/`), so CI needs no extra installs.
 
 ## Tests
 

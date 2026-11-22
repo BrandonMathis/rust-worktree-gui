@@ -35,8 +35,8 @@ For a short, non-technical overview, read [../REQUIREMENTS.md](../REQUIREMENTS.m
 | Actions and rename | 8 | 8 | 0 |
 | Pull requests | 6 | 6 | 0 |
 | Interface | 11 | 5 | 6 |
-| Constraints | 7 | 5 | 2 |
-| **Total** | **70** | **57** | **13** |
+| Constraints | 9 | 7 | 2 |
+| **Total** | **72** | **59** | **13** |
 
 Manual items are marked **Manual** in the Verification column of each document. The tests cover every requirement whose behavior lives in the state machine, Git or tmux integration, config parsing, or validation.
 
