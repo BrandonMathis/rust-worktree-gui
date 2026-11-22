@@ -113,7 +113,12 @@ struct Project {
     worktree_names: BTreeMap<PathBuf, String>,
     expanded: bool,
     refresh_id: Option<usize>,
-    inventory: Option<Result<Vec<Worktree>, String>>,
+    /// The last worktree list Git returned successfully. `None` until the
+    /// first refresh succeeds (or after the anchor is replaced).
+    inventory: Option<Vec<Worktree>>,
+    /// Why the latest refresh failed. The last good `inventory` is kept, so a
+    /// transient Git error doesn't make the selected worktree look deleted.
+    refresh_error: Option<String>,
     pull_requests: BTreeMap<PathBuf, PullRequestCheck>,
     open_after_refresh: Option<PathBuf>,
 }
@@ -222,10 +227,7 @@ impl Project {
     }
 
     fn worktrees(&self) -> &[Worktree] {
-        match &self.inventory {
-            Some(Ok(trees)) => trees,
-            _ => &[],
-        }
+        self.inventory.as_deref().unwrap_or_default()
     }
 
     fn worktree(&self, path: &Path) -> Option<&Worktree> {
@@ -349,6 +351,7 @@ impl App {
             expanded: false,
             refresh_id: None,
             inventory: None,
+            refresh_error: None,
             pull_requests: BTreeMap::new(),
             open_after_refresh: None,
         });
@@ -599,7 +602,8 @@ impl App {
             Message::ProjectChoice(_) => {}
             Message::NewWorktree(id) if self.can_start_creation() => {
                 if let Some(project) = self.projects.iter().find(|p| p.id == id)
-                    && matches!(project.inventory, Some(Ok(_)))
+                    && project.inventory.is_some()
+                    && project.refresh_error.is_none()
                 {
                     let source = self
                         .selection
@@ -714,11 +718,28 @@ impl App {
                     .find(|p| p.refresh_id == Some(refresh_id))
                 {
                     project.refresh_id = None;
-                    project.inventory = Some(result);
-                    // Old results can't be applied to a worktree that changed branches.
-                    project.pull_requests.clear();
                     let id = project.id;
                     let created = project.open_after_refresh.take();
+                    let trees = match result {
+                        Ok(trees) => trees,
+                        // Keep the last good inventory, selection, terminal and PR
+                        // badges: a failed refresh says nothing about whether the
+                        // worktrees still exist. The error is shown next to the project.
+                        Err(error) => {
+                            project.refresh_error = Some(error);
+                            if let Some(path) = created {
+                                self.notice = Some(format!(
+                                    "Worktree created at {}, but Git could not be read. Refresh to try again.",
+                                    path.display()
+                                ));
+                            }
+                            return Task::none();
+                        }
+                    };
+                    project.inventory = Some(trees);
+                    project.refresh_error = None;
+                    // Old results can't be applied to a worktree that changed branches.
+                    project.pull_requests.clear();
                     if self.worktree_name_draft.as_ref().is_some_and(|draft| {
                         draft.target.project == project.id
                             && draft
@@ -1097,6 +1118,7 @@ impl App {
                 let project = &mut self.projects[index];
                 project.checkout = checkout;
                 project.inventory = None;
+                project.refresh_error = None;
                 project.pull_requests.clear();
                 project.refresh_id = None; // Ignore inventory in flight for the old anchor.
                 Ok(id)
@@ -1287,7 +1309,7 @@ impl App {
                     )
                     .clip(true)
                     .width(Fill),
-                    text(if matches!(project.inventory, Some(Err(_))) {
+                    text(if project.refresh_error.is_some() {
                         "!"
                     } else {
                         ""
@@ -1589,8 +1611,9 @@ impl App {
 
     fn project_status<'a>(&self, project: &'a Project) -> Element<'a, Message> {
         let p = self.palette();
-        let message = match &project.inventory {
-            Some(Err(error)) => column![
+        // A refresh error wins over the (possibly stale) last good inventory.
+        let message = match (&project.refresh_error, &project.inventory) {
+            (Some(error), _) => column![
                 text("Checkout unavailable").color(p.red),
                 text(error).size(14),
                 text("Replace the anchor with a live checkout of the same repository.")
@@ -1598,14 +1621,14 @@ impl App {
                     .color(p.muted())
             ]
             .spacing(9),
-            Some(Ok(trees)) => column![
+            (None, Some(trees)) => column![
                 text(format!(
                     "{} worktrees  ·  Select one to open its terminal.",
                     trees.len()
                 ))
                 .color(p.muted())
             ],
-            None => column![text("Loading worktrees…").color(p.muted())],
+            (None, None) => column![text("Loading worktrees…").color(p.muted())],
         };
         container(scrollable(
             column![
@@ -2076,7 +2099,7 @@ mod tests {
         let config = tmp.path().join("config/projects.json");
         let (mut app, _) = App::from_bookmarks(Store::open_path(config.clone()));
         let id = app.bookmark(PickMode::Add, checkout.clone()).unwrap();
-        app.projects[0].inventory = Some(git::inventory(&checkout));
+        app.projects[0].inventory = Some(git::inventory(&checkout).unwrap());
 
         app.select(id, Some(root.clone()));
         app.console = ConsoleState::Connecting(9);
@@ -2121,7 +2144,7 @@ mod tests {
         let config = tmp.path().join("config/projects.json");
         let (mut app, _) = App::from_bookmarks(Store::open_path(config.clone()));
         let id = app.bookmark(PickMode::Add, checkout.clone()).unwrap();
-        app.projects[0].inventory = Some(git::inventory(&checkout));
+        app.projects[0].inventory = Some(git::inventory(&checkout).unwrap());
         app.select(id, Some(linked.clone()));
         let target = app.selection.clone().unwrap();
         app.rename_worktree(&target, "  Feature review  ").unwrap();
@@ -2138,7 +2161,7 @@ mod tests {
         );
 
         let (mut restarted, _) = App::from_bookmarks(Store::open_path(config.clone()));
-        restarted.projects[0].inventory = Some(git::inventory(&next_anchor));
+        restarted.projects[0].inventory = Some(git::inventory(&next_anchor).unwrap());
         let id = restarted.projects[0].id;
         restarted.select(id, Some(linked.clone()));
         let project = &restarted.projects[0];
@@ -2171,7 +2194,7 @@ mod tests {
         let config = tmp.path().join("config/projects.json");
         let (mut app, _) = App::from_bookmarks(Store::open_path(config));
         let id = app.bookmark(PickMode::Add, checkout.clone()).unwrap();
-        app.projects[0].inventory = Some(git::inventory(&checkout));
+        app.projects[0].inventory = Some(git::inventory(&checkout).unwrap());
         (tmp, app, id, root, linked)
     }
 
@@ -2283,6 +2306,41 @@ mod tests {
         refresh_now(&mut app, id);
         assert_eq!(app.selection.as_ref().unwrap().worktree, None);
         assert!(matches!(app.console, ConsoleState::Detached));
+    }
+
+    #[test]
+    fn failed_refresh_keeps_the_selection_terminal_and_pr_badges() {
+        let (_tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+        let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+        let request = app.pr_request_id;
+        let _ = app.update(Message::PullRequestFound(
+            id,
+            linked.clone(),
+            request,
+            Some(PullRequest::for_test(7)),
+        ));
+        app.console = ConsoleState::Connecting(4);
+
+        let _ = app.refresh(id);
+        let refresh_id = app.projects[0].refresh_id.unwrap();
+        let task = app.update(Message::Refreshed(refresh_id, Err("git exploded".into())));
+        assert_eq!(task.units(), 0, "no PR lookups for a failed refresh");
+        assert_eq!(
+            app.selection.as_ref().unwrap().worktree.as_deref(),
+            Some(linked.as_path())
+        );
+        assert!(matches!(app.console, ConsoleState::Connecting(4)));
+        assert_eq!(app.selected_pull_request().unwrap().number, 7);
+        assert_eq!(app.projects[0].worktrees().len(), 2);
+        assert_eq!(
+            app.projects[0].refresh_error.as_deref(),
+            Some("git exploded")
+        );
+
+        // The next successful refresh clears the error.
+        refresh_now(&mut app, id);
+        assert!(app.projects[0].refresh_error.is_none());
+        assert!(matches!(app.console, ConsoleState::Connecting(4)));
     }
 
     #[test]
@@ -2421,7 +2479,7 @@ mod tests {
             WorktreeIcon::PullRequest(pull_request::Status::Open)
         );
 
-        if let Some(Ok(trees)) = &mut app.projects[0].inventory {
+        if let Some(trees) = &mut app.projects[0].inventory {
             trees[1].directory_exists = false;
         }
         assert_eq!(icon(&app, &linked), WorktreeIcon::Unavailable);

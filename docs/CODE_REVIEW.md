@@ -10,7 +10,7 @@ There are no Critical or High findings. Security is sound: subprocesses use argu
 
 | # | Where | Problem | Fix |
 | --- | --- | --- | --- |
-| M1 | `app.rs` `Message::Refreshed` | A failed refresh (git error, anchor gone) stores `Err`, so `worktrees()` returns nothing. The selected worktree is then treated as deleted: the selection jumps to Overview and the terminal detaches, even though the worktree still exists. Violates WT-06. | Keep the last good inventory. Reconcile the selection only on `Ok`. Add a test. |
+| M1 | `app.rs` `Message::Refreshed` | A failed refresh (git error, anchor gone) stores `Err`, so `worktrees()` returns nothing. The selected worktree is then treated as deleted: the selection jumps to Overview and the terminal detaches, even though the worktree still exists. Violates WT-06. | Keep the last good inventory. Reconcile the selection only on `Ok`. Add a test. **Done:** `failed_refresh_keeps_the_selection_terminal_and_pr_badges`. |
 | M2 | `app.rs` `Message::ToggleProject` | Expanding another project in the sidebar selects it, which detaches the current terminal and clears the PR badge. Browsing the sidebar loses your view. | Expanding changes only `expanded`. Change the selection through Overview or a worktree click. |
 | M3 | `app.rs` `Project::name` | The project label is the anchor folder's name. After adding from a linked checkout, or after **Replace Anchor**, the project is labeled with that worktree's folder (for example `feature-x`). | Derive the name from `common_dir` (the parent of `.git`), or store a display name. |
 
