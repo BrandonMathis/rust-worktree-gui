@@ -605,6 +605,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-graphics"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa95a34622365fa5bbf40b20b75dba8dfa8c94c734aea8ac9a5ca38af14316f1"
+dependencies = [
+ "bitflags 2.13.2",
+ "core-foundation 0.10.1",
+ "core-graphics-types 0.2.0",
+ "foreign-types",
+ "libc",
+]
+
+[[package]]
 name = "core-graphics-types"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -628,12 +641,12 @@ dependencies = [
 
 [[package]]
 name = "core-text"
-version = "20.1.0"
+version = "21.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9d2790b5c08465d49f8dc05c8bcae9fea467855947db39b0f8145c091aaced5"
+checksum = "a593227b66cbd4007b2a050dfdd9e1d1318311409c8d600dc82ba1b15ca9c130"
 dependencies = [
- "core-foundation 0.9.4",
- "core-graphics",
+ "core-foundation 0.10.1",
+ "core-graphics 0.24.0",
  "foreign-types",
  "libc",
 ]
@@ -697,13 +710,13 @@ checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
 name = "crossfont"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a650099c323679b4d6fb6858c2c512660ff5118f6b0ffb1bfc6cadcd54002b14"
+checksum = "1efedb5e91df8e36e458f03a935b5f71495f73211ce7c5e341c668ded8571261"
 dependencies = [
- "core-foundation 0.9.4",
+ "core-foundation 0.10.1",
  "core-foundation-sys",
- "core-graphics",
+ "core-graphics 0.24.0",
  "core-text",
  "dwrote",
  "foreign-types",
@@ -745,16 +758,6 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
-]
-
-[[package]]
-name = "cstr"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68523903c8ae5aacfa32a0d9ae60cadeb764e1da14ee0d26b1f3089f13a54636"
-dependencies = [
- "proc-macro2",
- "quote",
 ]
 
 [[package]]
@@ -4602,7 +4605,7 @@ dependencies = [
  "cfg_aliases",
  "concurrent-queue",
  "core-foundation 0.9.4",
- "core-graphics",
+ "core-graphics 0.23.2",
  "cursor-icon",
  "dpi",
  "js-sys",
@@ -4751,11 +4754,10 @@ checksum = "ac366ea532fa8ee6a992cec9dea525b1dc284e69702f36c2ab5fbebadc81ec86"
 
 [[package]]
 name = "yeslogic-fontconfig-sys"
-version = "5.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffb6b23999a8b1a997bf47c7bb4d19ad4029c3327bb3386ebe0a5ff584b33c7a"
+checksum = "1d8b8abf912b9a29ff112e1671c97c33636903d13a69712037190e6805af4f76"
 dependencies = [
- "cstr",
  "dlib",
  "once_cell",
  "pkg-config",
