@@ -1224,7 +1224,6 @@ impl App {
             icon_button(icons::add(14, p.muted()), "Add Project", None, p)
         };
         let toolbar = row![
-            settings_button(p),
             single_line("Projects", 13),
             project_menu,
             icon_button(
@@ -1391,16 +1390,24 @@ impl App {
                     .width(Fill),
             );
         }
-        container(column![toolbar, scrollable(list.width(Fill)).height(Fill),].spacing(5))
-            .padding(6)
-            .width(202)
-            .height(Fill)
-            .style(if self.sidebar_visible {
-                style::panel(p, Panel::Glass)
-            } else {
-                style::panel(p, Panel::Floating)
-            })
-            .into()
+        // The Settings gear sits in the bottom-left corner, below the list.
+        container(
+            column![
+                toolbar,
+                scrollable(list.width(Fill)).height(Fill),
+                settings_button(p),
+            ]
+            .spacing(5),
+        )
+        .padding(6)
+        .width(202)
+        .height(Fill)
+        .style(if self.sidebar_visible {
+            style::panel(p, Panel::Glass)
+        } else {
+            style::panel(p, Panel::Floating)
+        })
+        .into()
     }
 
     fn show_sidebar_button(&self) -> Element<'static, Message> {
@@ -1408,20 +1415,14 @@ impl App {
         if self.sidebar_visible {
             Space::new().into()
         } else {
-            // With the sidebar hidden, Settings moves to the top-left corner too.
-            row![
-                settings_button(p),
-                mouse_area(
-                    button(icons::sidebar(15, p.purple))
-                        .padding(4)
-                        .style(style::button(p, Button::Nav))
-                        .on_press(Message::ToggleSidebar),
-                )
-                .on_enter(Message::SidebarHover(SidebarZone::Toggle, true))
-                .on_exit(Message::SidebarHover(SidebarZone::Toggle, false)),
-            ]
-            .spacing(2)
-            .align_y(Center)
+            mouse_area(
+                button(icons::sidebar(15, p.purple))
+                    .padding(4)
+                    .style(style::button(p, Button::Nav))
+                    .on_press(Message::ToggleSidebar),
+            )
+            .on_enter(Message::SidebarHover(SidebarZone::Toggle, true))
+            .on_exit(Message::SidebarHover(SidebarZone::Toggle, false))
             .into()
         }
     }
@@ -1978,7 +1979,7 @@ fn icon_button(
     .into()
 }
 
-/// The gear at the top left that opens the Settings modal.
+/// The gear in the sidebar's bottom-left corner that opens the Settings modal.
 fn settings_button(p: Palette) -> Element<'static, Message> {
     icon_button(
         icons::settings(14, p.muted()),

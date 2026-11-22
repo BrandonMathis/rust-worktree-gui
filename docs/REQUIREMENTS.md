@@ -43,7 +43,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - The sidebar can be hidden for a full-width terminal. While it's hidden, hovering the toggle shows the sidebar as a temporary overlay.
 
 **Settings and theme**
-- A gear at the top left opens a full-window Settings screen. Its first page, **Theme**, edits the app's eleven Dracula palette colors with a color wheel, a brightness slider and hex fields, and previews every change live.
+- A gear at the bottom left of the sidebar opens a full-window Settings screen. Its first page, **Theme**, edits the app's eleven Dracula palette colors with a color wheel, a brightness slider and hex fields, and previews every change live.
 - A preset menu offers Dracula, Alucard (light) and the Dracula Pro family (Pro, Blade, Buffy, Lincoln, Morbius, Van Helsing).
 - **Save & Confirm** keeps the theme across launches; **Cancel** or Escape discards the changes. The terminal keeps your Alacritty colors.
 

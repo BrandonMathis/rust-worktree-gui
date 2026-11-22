@@ -4,7 +4,7 @@
 
 | ID | Priority | Requirement | Verification | Status |
 | --- | --- | --- | --- | --- |
-| SET-01 | Must | A gear button at the top left of the sidebar toolbar opens Settings. When the sidebar is hidden, the gear sits beside the show-sidebar toggle in the header. | Manual: gear visible top left with the sidebar pinned and hidden. | Implemented |
+| SET-01 | Must | A gear button in the bottom-left corner of the sidebar opens Settings. When the sidebar is hidden, it is reachable from the hover preview of the sidebar. | Manual: gear visible bottom left with the sidebar pinned, and in the hover preview when hidden. | Implemented |
 | SET-02 | Must | Settings fills the window: a page list on the left (Theme is the first page) and the selected page on the right, with **Cancel** and **Save & Confirm** at the bottom. It replaces the workspace while open, so the terminal can't receive keystrokes meant for Settings. **Escape** cancels. | Manual: layout at 1120×720 and 820×440; Escape closes it. | Implemented |
 | SET-03 | Must | The Theme page lists the eleven Dracula palette colors (Background, Current Line, Foreground, Comment, Cyan, Green, Orange, Pink, Purple, Red, Yellow), each with a color chip and a hex field. Clicking a color moves the color wheel to it. | `selecting_a_color_moves_the_wheel_to_it` | Implemented |
 | SET-04 | Must | Dragging on the color wheel sets hue (angle) and saturation (distance from the center). A brightness slider sets value. Only the selected color changes. The drag keeps tracking outside the wheel, clamped to its rim. | `dragging_the_wheel_and_brightness_recolor_only_the_selected_slot_live`, `wheel_positions_map_to_hue_and_saturation_and_clamp_to_the_rim` | Implemented |
