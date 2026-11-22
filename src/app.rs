@@ -236,7 +236,22 @@ impl App {
             Err(error) if app.notice.is_none() => app.notice = Some(error),
             Err(_) => {}
         }
+        #[cfg(feature = "capture")]
+        if let Some(target) = crate::capture::target() {
+            app.open_after_load(target);
+        }
         (app, task)
+    }
+
+    /// Screenshot builds only: open a worktree as soon as its project loads.
+    /// This reuses the path a newly created worktree takes, so `Refreshed`
+    /// selects the worktree and connects its terminal.
+    #[cfg(feature = "capture")]
+    fn open_after_load(&mut self, target: crate::capture::Target) {
+        if let Some(project) = self.projects.get_mut(target.project) {
+            project.expanded = true;
+            project.open_after_refresh = Some(target.worktree);
+        }
     }
 
     fn from_bookmarks(

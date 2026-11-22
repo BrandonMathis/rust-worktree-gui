@@ -1,0 +1,19 @@
+#!/bin/sh
+# Fake `cargo test` output for the screenshot panes (no compiling needed).
+g='\033[1;32m' d='\033[0m' gr='\033[32m' y='\033[33m'
+printf "${g}   Compiling${d} acme-api v2.4.0 (%s)\n" "$PWD"
+printf "${g}    Finished${d} \`test\` profile [unoptimized + debuginfo] target(s) in 3.42s\n"
+printf "${g}     Running${d} unittests src/main.rs (target/debug/deps/acme_api-3f9c2b1e8d7a6f54)\n\n"
+printf "running 9 tests\n"
+for t in auth::tokens::tests::issues_tokens_with_a_fixed_lifetime \
+         auth::tokens::tests::rejects_expired_tokens \
+         auth::tokens::tests::rejects_tampered_signatures \
+         auth::tokens::tests::refresh_rotates_the_secret \
+         limits::tests::allows_bursts_up_to_capacity \
+         limits::tests::refills_over_time \
+         limits::tests::rejects_when_the_bucket_is_empty \
+         routes::tests::health_returns_ok; do
+  printf "test %s ... ${gr}ok${d}\n" "$t"
+done
+printf "test routes::tests::metrics_require_auth ... ${y}ignored${d}\n\n"
+printf "test result: ${gr}ok${d}. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s\n\n"

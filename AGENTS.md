@@ -11,7 +11,7 @@ Rust 1.90.0 is pinned in `.tool-versions` (asdf). Always pass `--locked`.
 ```sh
 cargo run --locked                                   # launch the app (needs tmux)
 cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked                                  # all tests; add a name to filter
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
 cargo deny check                                     # advisories, licenses, sources (deny.toml)
@@ -25,6 +25,16 @@ Format, clippy and test must pass before you call work done. CI (`.github/workfl
 - `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary. `docs/CODE_REVIEW.md` lists known issues and planned refactors.
 - When you add or change behavior, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
+
+## Screenshots
+
+`.github/workflows/screenshots.yml` posts screenshots of three app states on PRs that touch UI files. It builds with `--features capture` (startup hooks in `src/capture.rs`, off in normal builds) and runs `script/capture/capture.rb`, which creates fixture repos, a private tmux server with vim and shell splits, and an isolated `HOME`. It never touches your bookmarks, tmux sessions or dotfiles. Run it locally to check a visual change (a window appears briefly; your terminal needs Screen Recording permission):
+
+```sh
+cargo build --locked --features capture && ruby script/capture/capture.rb   # PNGs in target/screenshots
+```
+
+When a UI change adds or moves a key state, update the `states` list in `capture.rb`.
 - `PLAN.md` is the original external-Alacritty plan and is historical. Don't treat it as current.
 
 ## Architecture

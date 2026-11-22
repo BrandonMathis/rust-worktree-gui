@@ -47,14 +47,14 @@ The embedded widget still paints text with iced rather than Alacritty’s render
 
 ```sh
 cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked
 cargo doc --locked --no-deps --document-private-items   # with RUSTDOCFLAGS="-D warnings"
 cargo deny check                                        # advisories, licenses, sources
 cargo llvm-cov --locked                                 # coverage (needs llvm-tools)
 ```
 
-GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.
+GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Pull requests that touch UI files also get a comment with screenshots of three app states (`.github/workflows/screenshots.yml`). To capture them locally: `cargo build --locked --features capture && ruby script/capture/capture.rb` (PNGs in `target/screenshots`; it uses fixture repos and a private tmux server, never your own). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.
 
 For a native smoke test, open a linked worktree and run `pwd`, export a shell variable, then switch away and back. Check the variable both after switching and after restarting the app. Resize the window or split a tmux pane to check that the terminal redraws correctly. To check the error for a missing binary, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
 

@@ -1,0 +1,7 @@
+# Terminal preferences the app reads at startup. Menlo ships with every
+# macOS, so CI and local screenshots use the same font.
+[font]
+size = 13
+
+[font.normal]
+family = "Menlo"

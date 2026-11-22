@@ -1,5 +1,7 @@
 mod actions;
 mod app;
+#[cfg(feature = "capture")]
+mod capture;
 mod config;
 mod create;
 mod git;
@@ -17,6 +19,10 @@ mod tmux;
 mod git_fixtures;
 
 fn main() -> iced::Result {
+    let size = iced::Size::new(1120.0, 720.0);
+    // Screenshot builds can start at another size, such as the minimum window.
+    #[cfg(feature = "capture")]
+    let size = capture::window_size().unwrap_or(size);
     let preferences = terminal_config::Preferences::load();
     let font = preferences
         .as_ref()
@@ -32,7 +38,7 @@ fn main() -> iced::Result {
     .theme(iced::Theme::Dracula)
     .style(|_, theme| style::application(theme))
     .window(iced::window::Settings {
-        size: iced::Size::new(1120.0, 720.0),
+        size,
         transparent: true,
         blur: cfg!(target_os = "macos"),
         exit_on_close_request: false,
