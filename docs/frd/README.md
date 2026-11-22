@@ -16,6 +16,7 @@ For a short, non-technical overview, read [../REQUIREMENTS.md](../REQUIREMENTS.m
 | [FRD-06](FRD-06-pull-requests.md) | Pull request detection | `PR-*` |
 | [FRD-07](FRD-07-interface.md) | Look, layout and sidebar behavior | `UI-*` |
 | [FRD-08](FRD-08-constraints.md) | Constraints and non-functional requirements | `NFR-*` |
+| [FRD-09](FRD-09-settings.md) | Settings and theme | `SET-*` |
 
 ## Conventions
 
@@ -36,7 +37,8 @@ For a short, non-technical overview, read [../REQUIREMENTS.md](../REQUIREMENTS.m
 | Pull requests | 6 | 6 | 0 |
 | Interface | 11 | 5 | 6 |
 | Constraints | 7 | 5 | 2 |
-| **Total** | **70** | **57** | **13** |
+| Settings and theme | 10 | 8 | 2 |
+| **Total** | **80** | **65** | **15** |
 
 Manual items are marked **Manual** in the Verification column of each document. The tests cover every requirement whose behavior lives in the state machine, Git or tmux integration, config parsing, or validation.
 

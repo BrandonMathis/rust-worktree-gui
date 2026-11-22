@@ -36,26 +36,28 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `main.rs` | Window setup, theme, font. Includes `tests/git_fixtures.rs` as a test module. |
 | `app.rs` | All state, messages, update and view. Large; see the split proposed in `docs/CODE_REVIEW.md`. |
 | `git.rs` | `discover` (resolve the checkout and its common dir) and `inventory` (`git worktree list --porcelain -z` parser). |
-| `config.rs` | Bookmark store in `~/Library/Application Support/Worktree Browser/projects.json`, with atomic writes. |
+| `config.rs` | Bookmark store in `~/Library/Application Support/Worktree Browser/projects.json`, and the shared atomic JSON write. |
+| `theme.rs` | The palette (eleven Dracula colors), presets, hex/HSV conversion, and the saved `theme.json`. |
+| `settings.rs`, `color_wheel.rs` | Full-window Settings modal (a nested Elm component returning an `Outcome`); canvas hue/saturation wheel. |
 | `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup. |
 | `terminal.rs` | Wraps the `iced_term` widget (`Console`). |
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
 | `pull_request.rs` | `gh pr view` lookup and validation of the HTTPS PR URL. |
 | `actions.rs` | Open in Finder or VS Code, copy path. |
 | `create.rs`, `quit.rs` | New project and worktree creation flow; quit confirmation. |
-| `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, Dracula glass styles (3px radius), inline SVG icons. |
+| `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
 
 `vendor/iced_term` is a patched copy of `iced_term` 0.8.0 (via `[patch.crates-io]`). It adds things such as an explicit `cell_size` so the grid matches Alacritty's metrics. Keep patches minimal, and note why in the code you touch there.
 
 ## Rules
 
-- **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks and display names are the only persisted state.
+- **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names and the theme palette are the only persisted state.
 - **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Forgetting a project removes only the bookmark.
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; paths may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.
 - **No blocking work on the UI thread.** Run git, tmux, `gh` and `open` through `background(...)` or `Task::perform`, and return typed results as a `Message`. Guard async results with a request or epoch id so stale answers are ignored. Follow the existing patterns: `pr_request_id`, `refresh_id`, the `Connecting(id)` console state.
 - **tmux sessions** live on the `-L worktree-browser` socket and are named `wt-` plus 10 hex digits of SHA-256(common dir, canonical worktree path). Changing the naming scheme orphans users' running sessions, so it needs a migration (see `SessionNames::migrate`).
 - **Only open HTTPS URLs** with the OS opener.
-- **UI:** dark Dracula theme, 3px rounded corners, compact. Don't add padding to the terminal pane, and don't let sidebar labels wrap. Check visual changes with a macOS screenshot (`screencapture`) at the default (1120×720) and minimum (820×440) window sizes.
+- **UI:** dark Dracula theme by default, 3px rounded corners, compact. Don't add padding to the terminal pane, and don't let sidebar labels wrap. Check visual changes with a macOS screenshot (`screencapture`) at the default (1120×720) and minimum (820×440) window sizes. Colors come from the `Palette` passed into each view and style (`style::panel(p, Panel::Glass)`, `p.muted()`); never hard-code a color in a view.
 - Errors are user-facing `String`s shown in the notice bar. Never `unwrap` or `panic` on I/O or subprocess results outside tests.
 - Keep `pub` minimal. This is a single binary crate.
 
