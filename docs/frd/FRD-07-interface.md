@@ -21,3 +21,4 @@
 | UI-09 | Must | Errors appear in a dismissible notice bar and never crash the app. | `unreadable_bookmarks_disable_adding_projects_and_show_the_error` (notice state); Manual (rendering) | Implemented |
 | UI-10 | Should | The default window is 1120×720, with a minimum of 820×440. | Manual | Implemented |
 | UI-11 | Should | Toolbar buttons are icon-only with tooltips (Add Project, Refresh, Hide sidebar). Unavailable actions are disabled (for example, while a folder picker is open). | `unreadable_bookmarks_disable_adding_projects_and_show_the_error` | Implemented |
+| UI-12 | Must | Expanding or collapsing a project in the sidebar only shows or hides its worktrees. It never changes the selection, detaches the terminal or clears the PR badge. (A project is selected on expand only when nothing is selected yet.) | `expanding_another_project_keeps_the_selected_worktree_terminal_and_pr` | Implemented |

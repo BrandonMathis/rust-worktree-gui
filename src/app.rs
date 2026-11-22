@@ -797,7 +797,9 @@ impl App {
                     {
                         self.worktree_name_draft = None;
                     }
-                    if project.expanded && self.selection.as_ref().is_none_or(|s| s.project != id) {
+                    // Browsing the sidebar must not change what the workspace shows:
+                    // only select the project when nothing is selected at all.
+                    if project.expanded && self.selection.is_none() {
                         self.select(id, None);
                     }
                 }
@@ -2306,6 +2308,41 @@ mod tests {
         refresh_now(&mut app, id);
         assert_eq!(app.selection.as_ref().unwrap().worktree, None);
         assert!(matches!(app.console, ConsoleState::Detached));
+    }
+
+    #[test]
+    fn expanding_another_project_keeps_the_selected_worktree_terminal_and_pr() {
+        let (tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+        let other = tmp.path().join("other repo");
+        std::fs::create_dir(&other).unwrap();
+        run_git(&other, &["init", "-q"]);
+        let other = app
+            .bookmark(PickMode::Add, git::discover(&other).unwrap())
+            .unwrap();
+        let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+        let request = app.pr_request_id;
+        let _ = app.update(Message::PullRequestFound(
+            id,
+            linked.clone(),
+            request,
+            Some(PullRequest::for_test(2)),
+        ));
+        app.console = ConsoleState::Connecting(6);
+
+        for expanded in [true, false] {
+            let task = app.update(Message::ToggleProject(other));
+            assert_eq!(task.units(), 0);
+            assert_eq!(app.projects[1].expanded, expanded);
+            assert_eq!(
+                app.selection,
+                Some(Selection {
+                    project: id,
+                    worktree: Some(linked.clone())
+                })
+            );
+            assert!(matches!(app.console, ConsoleState::Connecting(6)));
+            assert_eq!(app.selected_pull_request().unwrap().number, 2);
+        }
     }
 
     #[test]
