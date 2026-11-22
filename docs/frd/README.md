@@ -16,6 +16,7 @@ For a short, non-technical overview, read [../REQUIREMENTS.md](../REQUIREMENTS.m
 | [FRD-06](FRD-06-pull-requests.md) | Pull request detection | `PR-*` |
 | [FRD-07](FRD-07-interface.md) | Look, layout and sidebar behavior | `UI-*` |
 | [FRD-08](FRD-08-constraints.md) | Constraints and non-functional requirements | `NFR-*` |
+| [FRD-09](FRD-09-settings.md) | Settings and theme | `SET-*` |
 
 ## Conventions
 
@@ -24,21 +25,11 @@ For a short, non-technical overview, read [../REQUIREMENTS.md](../REQUIREMENTS.m
 - **Verification:** an automated test name (run with `cargo test --locked <name>`), or **Manual** with the check to perform. Manual items are GUI rendering or OS integration that unit tests can't observe.
 - **Status:** *Implemented*, *Partial* or *Not implemented*.
 
-## Traceability summary
+## Traceability
 
-| Area | Requirements | Automated | Manual only |
-| --- | --- | --- | --- |
-| Projects | 9 | 9 | 0 |
-| Worktrees | 8 | 8 | 0 |
-| Terminal sessions | 12 | 10 | 2 |
-| Terminal preferences | 9 | 6 | 3 |
-| Actions and rename | 8 | 8 | 0 |
-| Pull requests | 6 | 6 | 0 |
-| Interface | 11 | 5 | 6 |
-| Constraints | 9 | 7 | 2 |
-| **Total** | **72** | **59** | **13** |
+Each FRD document is the source of truth for its requirements. Every row names the test that verifies it, or is marked **Manual** with the check to perform. Manual items are GUI rendering or OS integration that unit tests can't observe. The tests cover every requirement whose behavior lives in the state machine, Git or tmux integration, config parsing, or validation.
 
-Manual items are marked **Manual** in the Verification column of each document. The tests cover every requirement whose behavior lives in the state machine, Git or tmux integration, config parsing, or validation.
+This index deliberately has no per-area requirement counts. Keeping totals here meant every feature branch edited the same lines, which caused merge conflicts. To count, look at the FRD tables directly.
 
 ## How to verify
 

@@ -5,9 +5,11 @@ use crate::{
     git::{self, Checkout, Worktree},
     icons,
     pull_request::{self, PullRequest},
-    quit, row_menu, style,
+    quit, row_menu, settings,
+    style::{self, Button, Panel},
     terminal::Console,
     terminal_config::Preferences,
+    theme::{self, Palette},
     tmux,
 };
 use iced::futures::{StreamExt, stream};
@@ -52,6 +54,11 @@ pub struct App {
     creation: Option<create::Draft>,
     worktree_name_draft: Option<RenameDraft>,
     notice: Option<String>,
+    /// The saved theme.
+    palette: Palette,
+    theme_store: Option<theme::Store>,
+    /// The open Settings modal and its unsaved edits.
+    settings: Option<settings::Draft>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -168,6 +175,8 @@ pub enum Message {
     CancelWorktreeName,
     ActionFinished(Result<Option<String>, String>),
     DismissNotice,
+    OpenSettings,
+    Settings(settings::Message),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,12 +263,12 @@ enum WorktreeIcon {
 }
 
 impl WorktreeIcon {
-    fn view<'a>(self, size: u32) -> Svg<'a> {
+    fn view<'a>(self, size: u32, p: Palette) -> Svg<'a> {
         match self {
-            Self::Unavailable => icons::warning(size, style::RED),
-            Self::Main => icons::home(size, style::ORANGE),
-            Self::Worktree => icons::branch(size, style::CYAN),
-            Self::PullRequest(status) => icons::pr_status(size, status),
+            Self::Unavailable => icons::warning(size, p.red),
+            Self::Main => icons::home(size, p.orange),
+            Self::Worktree => icons::branch(size, p.cyan),
+            Self::PullRequest(status) => icons::pr_status(size, status, p),
         }
     }
 }
@@ -269,6 +278,18 @@ impl App {
         let (mut app, task) = Self::from_bookmarks(Store::open());
         match preferences {
             Ok(preferences) => app.terminal_preferences = preferences,
+            Err(error) if app.notice.is_none() => app.notice = Some(error),
+            Err(_) => {}
+        }
+        let theme = theme::Store::open().and_then(|store| {
+            let palette = store.load();
+            // Keep the store even when the file is unreadable, so saving from
+            // Settings can replace it.
+            app.theme_store = Some(store);
+            palette
+        });
+        match theme {
+            Ok(palette) => app.palette = palette,
             Err(error) if app.notice.is_none() => app.notice = Some(error),
             Err(_) => {}
         }
@@ -300,6 +321,9 @@ impl App {
             creation: None,
             worktree_name_draft: None,
             notice,
+            palette: Palette::default(),
+            theme_store: None,
+            settings: None,
         };
         for project in projects {
             app.insert_project(project);
@@ -453,7 +477,57 @@ impl App {
         } else {
             Subscription::none()
         };
-        Subscription::batch([terminal, iced::event::listen_with(window_scale)])
+        let settings = if self.settings.is_some() {
+            iced::event::listen_with(settings_keys)
+        } else {
+            Subscription::none()
+        };
+        Subscription::batch([terminal, settings, iced::event::listen_with(window_scale)])
+    }
+
+    /// The palette to draw with: the unsaved draft while Settings is open
+    /// (live preview), otherwise the saved theme.
+    pub fn palette(&self) -> Palette {
+        self.settings
+            .as_ref()
+            .map_or(self.palette, settings::Draft::palette)
+    }
+
+    pub fn theme(&self) -> iced::Theme {
+        self.palette().iced_theme()
+    }
+
+    fn settings(&mut self, message: settings::Message) -> Task<Message> {
+        let Some(draft) = &mut self.settings else {
+            return Task::none();
+        };
+        match draft.update(message) {
+            None => Task::none(),
+            Some(settings::Outcome::Cancel) => {
+                self.settings = None;
+                self.focus_terminal()
+            }
+            Some(settings::Outcome::Save(palette)) => {
+                let saved = self
+                    .theme_store
+                    .as_ref()
+                    .ok_or_else(|| "Theme settings are unavailable: could not locate the Application Support directory.".to_owned())
+                    .and_then(|store| store.save(&palette));
+                match saved {
+                    Ok(()) => {
+                        self.palette = palette;
+                        self.settings = None;
+                        self.notice = None;
+                        self.focus_terminal()
+                    }
+                    // Keep the modal open so the edits aren't lost.
+                    Err(error) => {
+                        self.notice = Some(error);
+                        Task::none()
+                    }
+                }
+            }
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -828,6 +902,12 @@ impl App {
             }
             Message::ActionFinished(Err(error)) => self.notice = Some(error),
             Message::DismissNotice => self.notice = None,
+            Message::OpenSettings => {
+                if self.settings.is_none() {
+                    self.settings = Some(settings::Draft::new(self.palette));
+                }
+            }
+            Message::Settings(message) => return self.settings(message),
         }
         Task::none()
     }
@@ -1079,6 +1159,36 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        let p = self.palette();
+        let content = match &self.settings {
+            // Settings replaces the whole window rather than floating over it,
+            // so the terminal underneath can't receive keystrokes meant for it.
+            Some(draft) => draft.view().map(Message::Settings),
+            None => self.main_layout(),
+        };
+        let mut page = column![content].spacing(4);
+        if let Some(notice) = &self.notice {
+            page = page.push(
+                container(
+                    row![
+                        text(notice).size(13).width(Fill),
+                        button("Dismiss")
+                            .on_press(Message::DismissNotice)
+                            .style(style::button(p, Button::Secondary)),
+                    ]
+                    .spacing(12)
+                    .align_y(Center),
+                )
+                .padding(10)
+                .width(Fill)
+                .style(style::panel(p, Panel::Glass)),
+            );
+        }
+        container(page).padding(4).width(Fill).height(Fill).into()
+    }
+
+    /// The sidebar and workspace, with the sidebar preview overlay.
+    fn main_layout(&self) -> Element<'_, Message> {
         // Keep the workspace in the same widget slot when toggling the sidebar.
         let sidebar = if self.sidebar_visible {
             self.sidebar()
@@ -1098,57 +1208,43 @@ impl App {
             // The stack keeps its base layout; the top layer only paints over the terminal.
             workspace = workspace.push(column![Space::new().height(36), panel]);
         }
-        let mut page = column![workspace].spacing(4);
-        if let Some(notice) = &self.notice {
-            page = page.push(
-                container(
-                    row![
-                        text(notice).size(13).width(Fill),
-                        button("Dismiss")
-                            .on_press(Message::DismissNotice)
-                            .style(style::secondary),
-                    ]
-                    .spacing(12)
-                    .align_y(Center),
-                )
-                .padding(10)
-                .width(Fill)
-                .style(style::glass),
-            );
-        }
-        container(page).padding(4).width(Fill).height(Fill).into()
+        workspace.into()
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
+        let p = self.palette();
         let refreshing = self.projects.iter().any(|p| p.refresh_id.is_some());
         let project_menu = if self.can_start_creation() {
             row_menu::add(
                 vec![ProjectChoice::New, ProjectChoice::Existing],
                 Message::ProjectChoice,
+                p,
             )
         } else {
-            icon_button(icons::add(14, style::MUTED), "Add Project", None)
+            icon_button(icons::add(14, p.muted()), "Add Project", None, p)
         };
         let toolbar = row![
             single_line("Projects", 13),
             project_menu,
             icon_button(
-                icons::connecting(14, style::MUTED),
+                icons::connecting(14, p.muted()),
                 if refreshing {
                     "Refreshing…"
                 } else {
                     "Refresh worktrees and PR"
                 },
                 (!self.projects.is_empty() && !refreshing).then_some(Message::Refresh),
+                p,
             ),
             icon_button(
-                icons::sidebar(14, style::MUTED),
+                icons::sidebar(14, p.muted()),
                 if self.sidebar_visible {
                     "Hide sidebar"
                 } else {
                     "Pin sidebar"
                 },
                 Some(Message::ToggleSidebar),
+                p,
             ),
         ]
         .spacing(2)
@@ -1162,7 +1258,7 @@ impl App {
                     "Bookmarks are unavailable"
                 })
                 .size(13)
-                .color(style::MUTED),
+                .color(p.muted()),
             );
         }
         // Struct update syntax (`..base`) copies the user's font family and only
@@ -1174,9 +1270,9 @@ impl App {
         for project in &self.projects {
             let selection = self.selection.as_ref().filter(|s| s.project == project.id);
             let caret = if project.expanded {
-                icons::chevron_down(15, style::TEXT)
+                icons::chevron_down(15, p.foreground)
             } else {
-                icons::chevron_right(15, style::TEXT)
+                icons::chevron_right(15, p.foreground)
             };
             let name = project.name().replace(['\n', '\r'], " ");
             let project_button = button(
@@ -1196,7 +1292,7 @@ impl App {
                     } else {
                         ""
                     })
-                    .color(style::RED),
+                    .color(p.red),
                     Space::new().width(22),
                 ]
                 .spacing(4)
@@ -1206,9 +1302,9 @@ impl App {
             .padding([5, 4])
             .on_press(Message::ToggleProject(project.id))
             .style(if selection.is_some() {
-                style::secondary
+                style::button(p, Button::Secondary)
             } else {
-                style::project
+                style::button(p, Button::Project)
             });
             list = list.push(with_row_menu(
                 project_button,
@@ -1216,12 +1312,13 @@ impl App {
                     project: project.id,
                     worktree: None,
                 },
+                p,
             ));
             if !project.expanded {
                 continue;
             }
             let mut children =
-                column![container(text("Worktrees").size(10).color(style::MUTED)).padding([1, 4]),]
+                column![container(text("Worktrees").size(10).color(p.muted())).padding([1, 4]),]
                     .spacing(1);
             if project.worktrees().is_empty() {
                 children = children.push(
@@ -1231,7 +1328,7 @@ impl App {
                         "No worktrees to show"
                     })
                     .size(12)
-                    .color(style::MUTED),
+                    .color(p.muted()),
                 );
             }
             for tree in project.worktrees() {
@@ -1239,7 +1336,7 @@ impl App {
                     selection.and_then(|s| s.worktree.as_deref()) == Some(tree.path.as_path());
                 let pr = project.pull_request(&tree.path);
                 let label = row![
-                    project.worktree_icon(tree).view(13),
+                    project.worktree_icon(tree).view(13, p),
                     single_line(project.worktree_name(tree), 12),
                 ]
                 .spacing(5)
@@ -1248,7 +1345,7 @@ impl App {
                     text(project.worktree_name(tree)).size(12),
                     text(format!("{}  ·  {}", tree.label(), tree.path.display()))
                         .size(11)
-                        .color(style::MUTED),
+                        .color(p.muted()),
                 ]
                 .spacing(3);
                 if let Some(pr) = pr {
@@ -1259,14 +1356,18 @@ impl App {
                     container(details)
                         .max_width(500)
                         .padding(7)
-                        .style(style::console),
+                        .style(style::panel(p, Panel::Console)),
                     tooltip::Position::Right,
                 )
                 .delay(std::time::Duration::from_millis(600));
                 let base = button(row![label, Space::new().width(22)])
                     .width(Fill)
                     .padding([3, 5])
-                    .style(if active { style::selected } else { style::nav })
+                    .style(if active {
+                        style::button(p, Button::Selected)
+                    } else {
+                        style::button(p, Button::Nav)
+                    })
                     .on_press(Message::SelectWorktree(project.id, tree.path.clone()));
                 let target = Selection {
                     project: project.id,
@@ -1277,7 +1378,7 @@ impl App {
                 } else {
                     self.rename_editor(&target, tree.label(), true)
                 };
-                children = children.push(with_row_menu(base, target));
+                children = children.push(with_row_menu(base, target, p));
                 if let Some(editor) = editor {
                     children = children.push(editor);
                 }
@@ -1289,26 +1390,35 @@ impl App {
                     .width(Fill),
             );
         }
-        container(column![toolbar, scrollable(list.width(Fill)).height(Fill),].spacing(5))
-            .padding(6)
-            .width(202)
-            .height(Fill)
-            .style(if self.sidebar_visible {
-                style::glass
-            } else {
-                style::sidebar_preview
-            })
-            .into()
+        // The Settings gear sits in the bottom-left corner, below the list.
+        container(
+            column![
+                toolbar,
+                scrollable(list.width(Fill)).height(Fill),
+                settings_button(p),
+            ]
+            .spacing(5),
+        )
+        .padding(6)
+        .width(202)
+        .height(Fill)
+        .style(if self.sidebar_visible {
+            style::panel(p, Panel::Glass)
+        } else {
+            style::panel(p, Panel::Floating)
+        })
+        .into()
     }
 
     fn show_sidebar_button(&self) -> Element<'static, Message> {
+        let p = self.palette();
         if self.sidebar_visible {
             Space::new().into()
         } else {
             mouse_area(
-                button(icons::sidebar(15, style::PURPLE))
+                button(icons::sidebar(15, p.purple))
                     .padding(4)
-                    .style(style::nav)
+                    .style(style::button(p, Button::Nav))
                     .on_press(Message::ToggleSidebar),
             )
             .on_enter(Message::SidebarHover(SidebarZone::Toggle, true))
@@ -1318,6 +1428,7 @@ impl App {
     }
 
     fn workspace(&self) -> Element<'_, Message> {
+        let p = self.palette();
         if let Some(draft) = &self.creation {
             return self.creation_form(draft);
         }
@@ -1335,16 +1446,16 @@ impl App {
                     row![self.show_sidebar_button(), text("Open a project").size(20)]
                         .spacing(if self.sidebar_visible { 0 } else { 5 })
                         .align_y(Center),
-                    text("Create a project or add an existing Git repository.").color(style::MUTED),
+                    text("Create a project or add an existing Git repository.").color(p.muted()),
                     row![
                         button(text("New Project…").size(13))
-                            .style(style::primary)
+                            .style(style::button(p, Button::Primary))
                             .on_press_maybe(
                                 self.can_start_creation()
                                     .then_some(Message::ProjectChoice(ProjectChoice::New))
                             ),
                         button(text("Add Existing Repository…").size(13))
-                            .style(style::secondary)
+                            .style(style::button(p, Button::Secondary))
                             .on_press_maybe(
                                 self.can_start_creation()
                                     .then_some(Message::ProjectChoice(ProjectChoice::Existing))
@@ -1357,12 +1468,13 @@ impl App {
             .padding(12)
             .width(Fill)
             .height(Fill)
-            .style(style::glass)
+            .style(style::panel(p, Panel::Glass))
             .into(),
         }
     }
 
     fn creation_form<'a>(&'a self, draft: &'a create::Draft) -> Element<'a, Message> {
+        let p = self.palette();
         let worktree = matches!(draft.kind, create::Kind::Worktree { .. });
         let title = if worktree {
             "New Worktree"
@@ -1371,7 +1483,7 @@ impl App {
         };
         let ready = !draft.submitting && !self.picking;
         let field = |label: &'static str, input: Element<'a, Message>| {
-            column![text(label).size(12).color(style::MUTED), input].spacing(3)
+            column![text(label).size(12).color(p.muted()), input].spacing(3)
         };
         let mut form = column![
             row![self.show_sidebar_button(), text(title).size(18)]
@@ -1383,7 +1495,7 @@ impl App {
                 "Create a folder, initialize Git, and add it to Projects."
             })
             .size(13)
-            .color(style::MUTED),
+            .color(p.muted()),
         ]
         .spacing(8);
         if let create::Kind::Worktree { source, .. } = &draft.kind {
@@ -1404,7 +1516,7 @@ impl App {
                 .push(
                     text(format!("Base is resolved from {}", source.display()))
                         .size(11)
-                        .color(style::MUTED),
+                        .color(p.muted()),
                 );
         }
         let placeholder = draft.suggested_name();
@@ -1432,7 +1544,7 @@ impl App {
                 .width(Fill)
                 .size(13),
                 button(text("Choose Location…").size(12))
-                    .style(style::secondary)
+                    .style(style::button(p, Button::Secondary))
                     .on_press_maybe(ready.then_some(Message::Pick(PickMode::CreateParent))),
             ]
             .spacing(6)
@@ -1443,7 +1555,7 @@ impl App {
             form = form.push(
                 text(format!("Create at {}", path.display()))
                     .size(12)
-                    .color(style::MUTED),
+                    .color(p.muted()),
             );
         }
         form = form.push(
@@ -1458,10 +1570,10 @@ impl App {
                     })
                     .size(13)
                 )
-                .style(style::primary)
+                .style(style::button(p, Button::Primary))
                 .on_press_maybe((ready && destination.is_ok()).then_some(Message::ConfirmCreation)),
                 button(text("Cancel").size(13))
-                    .style(style::secondary)
+                    .style(style::button(p, Button::Secondary))
                     .on_press_maybe(ready.then_some(Message::CancelCreation)),
             ]
             .spacing(6),
@@ -1471,18 +1583,19 @@ impl App {
         ))
         .width(Fill)
         .height(Fill)
-        .style(style::glass)
+        .style(style::panel(p, Panel::Glass))
         .into()
     }
 
     fn project_status<'a>(&self, project: &'a Project) -> Element<'a, Message> {
+        let p = self.palette();
         let message = match &project.inventory {
             Some(Err(error)) => column![
-                text("Checkout unavailable").color(style::RED),
+                text("Checkout unavailable").color(p.red),
                 text(error).size(14),
                 text("Replace the anchor with a live checkout of the same repository.")
                     .size(14)
-                    .color(style::MUTED)
+                    .color(p.muted())
             ]
             .spacing(9),
             Some(Ok(trees)) => column![
@@ -1490,15 +1603,15 @@ impl App {
                     "{} worktrees  ·  Select one to open its terminal.",
                     trees.len()
                 ))
-                .color(style::MUTED)
+                .color(p.muted())
             ],
-            None => column![text("Loading worktrees…").color(style::MUTED)],
+            None => column![text("Loading worktrees…").color(p.muted())],
         };
         container(scrollable(
             column![
                 row![
                     if self.sidebar_visible {
-                        icons::folder(16, style::PURPLE).into()
+                        icons::folder(16, p.purple).into()
                     } else {
                         self.show_sidebar_button()
                     },
@@ -1508,7 +1621,7 @@ impl App {
                 .align_y(Center),
                 text(project.checkout.root.display().to_string())
                     .size(13)
-                    .color(style::MUTED),
+                    .color(p.muted()),
                 message,
             ]
             .spacing(8)
@@ -1517,7 +1630,7 @@ impl App {
         ))
         .width(Fill)
         .height(Fill)
-        .style(style::glass)
+        .style(style::panel(p, Panel::Glass))
         .into()
     }
 
@@ -1527,6 +1640,7 @@ impl App {
         branch: &'a str,
         compact: bool,
     ) -> Option<Element<'a, Message>> {
+        let p = self.palette();
         let draft = self
             .worktree_name_draft
             .as_ref()
@@ -1539,10 +1653,10 @@ impl App {
             .on_submit(Message::SaveWorktreeName);
         let controls = row![
             button(text("Save").size(12))
-                .style(style::primary)
+                .style(style::button(p, Button::Primary))
                 .on_press(Message::SaveWorktreeName),
             button(text("Cancel").size(12))
-                .style(style::secondary)
+                .style(style::button(p, Button::Secondary))
                 .on_press(Message::CancelWorktreeName),
         ]
         .spacing(4);
@@ -1555,7 +1669,7 @@ impl App {
                 row![input, controls].spacing(6).align_y(Center),
                 text("Display name only. Clear it to use the Git branch name.")
                     .size(11)
-                    .color(style::MUTED),
+                    .color(p.muted()),
             ]
             .spacing(2)
             .into()
@@ -1567,29 +1681,30 @@ impl App {
         project: &'a Project,
         tree: &'a Worktree,
     ) -> Element<'a, Message> {
+        let p = self.palette();
         let name = project.worktree_name(tree);
         let mut actions = row![].spacing(6).align_y(Center);
         if let Some(pr) = project.pull_request(&tree.path) {
             actions = actions.push(tooltip(
                 button(
                     row![
-                        icons::pr_status(14, pr.status),
+                        icons::pr_status(14, pr.status, p),
                         text(format!("PR #{}", pr.number)).size(12),
                     ]
                     .spacing(5)
                     .align_y(Center),
                 )
                 .padding([4, 7])
-                .style(style::secondary)
+                .style(style::button(p, Button::Secondary))
                 .on_press(Message::OpenPullRequest),
                 container(text(pr.label()).size(11))
                     .padding([3, 5])
-                    .style(style::console),
+                    .style(style::panel(p, Panel::Console)),
                 tooltip::Position::Bottom,
             ));
         }
         let title = tooltip(
-            row![icons::branch(14, style::PURPLE), single_line(name, 14)]
+            row![icons::branch(14, p.purple), single_line(name, 14)]
                 .spacing(5)
                 .width(Fill)
                 .align_y(Center),
@@ -1605,16 +1720,16 @@ impl App {
                             .unwrap_or("")
                     ))
                     .size(11)
-                    .color(style::MUTED),
+                    .color(p.muted()),
                     text(tree.path.display().to_string())
                         .size(11)
-                        .color(style::MUTED),
+                        .color(p.muted()),
                 ]
                 .spacing(2),
             )
             .padding(6)
             .max_width(500)
-            .style(style::console),
+            .style(style::panel(p, Panel::Console)),
             tooltip::Position::Bottom,
         )
         .delay(std::time::Duration::from_millis(500));
@@ -1629,7 +1744,7 @@ impl App {
                 .as_ref()
                 .filter(|detail| !detail.is_empty())
                 .map(String::as_str);
-            ("Unavailable", style::RED, None, placeholder(reason, detail))
+            ("Unavailable", p.red, None, placeholder(reason, detail, p))
         } else {
             match &self.console {
                 ConsoleState::Attached(console) => {
@@ -1639,11 +1754,11 @@ impl App {
                         .height(Fill)
                         .spacing(6);
                     if let Some(error) = failure {
-                        content = content.push(text(error).size(13).color(style::RED));
+                        content = content.push(text(error).size(13).color(p.red));
                     }
                     (
                         if open { "Attached" } else { "Detached" },
-                        if open { style::GREEN } else { style::MUTED },
+                        if open { p.green } else { p.muted() },
                         Some(if open {
                             ("Detach", Message::Detach)
                         } else {
@@ -1654,33 +1769,35 @@ impl App {
                 }
                 ConsoleState::Failed(error) => (
                     "Could not connect",
-                    style::RED,
+                    p.red,
                     Some(("Retry", Message::Reconnect)),
-                    placeholder("Terminal not started", Some(error)),
+                    placeholder("Terminal not started", Some(error), p),
                 ),
                 ConsoleState::Connecting(_) => (
                     "Connecting…",
-                    style::MUTED,
+                    p.muted(),
                     Some(("Cancel", Message::Detach)),
                     placeholder(
                         "Opening tmux",
                         Some("Connecting to this worktree’s session."),
+                        p,
                     ),
                 ),
                 ConsoleState::Detached => (
                     "Detached",
-                    style::MUTED,
+                    p.muted(),
                     Some(("Connect", Message::Reconnect)),
                     placeholder(
                         "No terminal attached",
                         Some("Connect to start or resume the tmux session for this worktree."),
+                        p,
                     ),
                 ),
             }
         };
         let status = match badge {
             "Attached" => icons::connected(13, badge_color),
-            "Connecting…" => icons::connecting(13, style::PURPLE),
+            "Connecting…" => icons::connecting(13, p.purple),
             "Detached" => icons::empty(13, badge_color),
             _ => icons::warning(13, badge_color),
         };
@@ -1692,11 +1809,11 @@ impl App {
                         .align_y(Center),
                 )
                 .padding([2, 5])
-                .style(style::secondary)
+                .style(style::button(p, Button::Secondary))
                 .on_press(message),
                 container(text(format!("Terminal: {badge}")).size(11))
                     .padding([3, 5])
-                    .style(style::console),
+                    .style(style::panel(p, Panel::Console)),
                 tooltip::Position::Bottom,
             )
             .delay(std::time::Duration::from_millis(500))
@@ -1711,7 +1828,7 @@ impl App {
             self.show_sidebar_button(),
             title,
             terminal_status,
-            actions.push(actions_menu(target)),
+            actions.push(actions_menu(target, p)),
         ]
         .spacing(4)
         .align_y(Center);
@@ -1723,11 +1840,11 @@ impl App {
             container(header)
                 .padding([2, 4])
                 .width(Fill)
-                .style(style::glass),
+                .style(style::panel(p, Panel::Glass)),
             container(body)
                 .width(Fill)
                 .height(Fill)
-                .style(style::console),
+                .style(style::panel(p, Panel::Console)),
         ]
         .spacing(2)
         .into()
@@ -1747,6 +1864,21 @@ fn window_scale(
         iced::Event::Window(iced::window::Event::Rescaled(scale)) => {
             Some(Message::WindowScale(scale))
         }
+        _ => None,
+    }
+}
+
+/// Escape cancels the Settings modal (subscribed only while it is open).
+fn settings_keys(
+    event: iced::Event,
+    _: iced::event::Status,
+    _: iced::window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            ..
+        }) => Some(Message::Settings(settings::Message::Cancel)),
         _ => None,
     }
 }
@@ -1782,11 +1914,13 @@ fn menu_actions(worktree: bool) -> Vec<MenuAction> {
 fn with_row_menu<'a>(
     base: impl Into<Element<'a, Message>>,
     target: Selection,
+    p: Palette,
 ) -> Element<'a, Message> {
     let menu = row_menu::show(
         format!("{target:?}"),
         menu_actions(target.worktree.is_some()),
         move |action| Message::MenuAction(target.clone(), action),
+        p,
     );
     hover(
         base,
@@ -1797,7 +1931,7 @@ fn with_row_menu<'a>(
     )
 }
 
-fn actions_menu(target: Selection) -> Element<'static, Message> {
+fn actions_menu(target: Selection, p: Palette) -> Element<'static, Message> {
     pick_list(
         menu_actions(target.worktree.is_some()),
         None::<MenuAction>,
@@ -1807,8 +1941,8 @@ fn actions_menu(target: Selection) -> Element<'static, Message> {
     .width(164)
     .text_size(12)
     .padding([4, 7])
-    .style(style::action_picker)
-    .menu_style(style::action_menu)
+    .style(style::action_picker(p))
+    .menu_style(style::action_menu(p))
     .into()
 }
 
@@ -1829,25 +1963,36 @@ fn icon_button(
     icon: Svg<'static>,
     label: &'static str,
     message: Option<Message>,
+    p: Palette,
 ) -> Element<'static, Message> {
     tooltip(
         button(icon)
             .padding(4)
-            .style(style::nav)
+            .style(style::button(p, Button::Nav))
             .on_press_maybe(message),
         container(text(label).size(11))
             .padding([3, 5])
-            .style(style::console),
+            .style(style::panel(p, Panel::Console)),
         tooltip::Position::Bottom,
     )
     .delay(std::time::Duration::from_millis(400))
     .into()
 }
 
-fn placeholder<'a>(title: &'a str, detail: Option<&'a str>) -> Element<'a, Message> {
+/// The gear in the sidebar's bottom-left corner that opens the Settings modal.
+fn settings_button(p: Palette) -> Element<'static, Message> {
+    icon_button(
+        icons::settings(14, p.muted()),
+        "Settings",
+        Some(Message::OpenSettings),
+        p,
+    )
+}
+
+fn placeholder<'a>(title: &'a str, detail: Option<&'a str>, p: Palette) -> Element<'a, Message> {
     let mut body = column![text(title).size(19)].spacing(6);
     if let Some(detail) = detail {
-        body = body.push(text(detail).size(14).color(style::MUTED));
+        body = body.push(text(detail).size(14).color(p.muted()));
     }
     container(body).padding(6).width(Fill).height(Fill).into()
 }
@@ -2398,5 +2543,58 @@ mod tests {
         restarted.forget(restarted.projects[0].id).unwrap();
         assert!(Store::open_path(config).unwrap().1.is_empty());
         assert!(git::inventory(&main).is_ok());
+    }
+    #[test]
+    fn theme_edits_preview_live_and_cancel_restores_the_saved_theme() {
+        use crate::theme::{Preset, Slot};
+        let (mut app, _) = App::from_bookmarks(Err("test store".into()));
+        let saved = app.palette();
+        let _ = app.update(Message::OpenSettings);
+        let _ = app.update(Message::Settings(settings::Message::Preset(Preset::Blade)));
+        let _ = app.update(Message::Settings(settings::Message::Hex(
+            Slot::Purple,
+            "#00FF00".into(),
+        )));
+        // The whole app (window style and iced theme) draws with the draft.
+        assert_eq!(app.palette().background, Preset::Blade.palette().background);
+        assert_eq!(app.theme().palette().primary, app.palette().purple);
+        assert_eq!(theme::to_hex(app.palette().purple), "#00FF00");
+
+        let _ = app.update(Message::Settings(settings::Message::Cancel));
+        assert!(app.settings.is_none());
+        assert_eq!(app.palette(), saved);
+    }
+
+    #[test]
+    fn saved_theme_applies_and_survives_a_restart() {
+        use crate::theme::Preset;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("theme.json");
+        let (mut app, _) = App::from_bookmarks(Err("test store".into()));
+        app.theme_store = Some(theme::Store::at(path.clone()));
+        let _ = app.update(Message::OpenSettings);
+        let _ = app.update(Message::Settings(settings::Message::Preset(
+            Preset::Morbius,
+        )));
+        let _ = app.update(Message::Settings(settings::Message::Save));
+        assert!(app.settings.is_none());
+        assert_eq!(app.palette(), Preset::Morbius.palette());
+        assert_eq!(
+            theme::Store::at(path).load().unwrap(),
+            Preset::Morbius.palette()
+        );
+    }
+
+    #[test]
+    fn failed_theme_save_keeps_the_modal_open_and_shows_the_error() {
+        use crate::theme::Preset;
+        let (mut app, _) = App::from_bookmarks(Err("test store".into()));
+        app.notice = None;
+        let _ = app.update(Message::OpenSettings);
+        let _ = app.update(Message::Settings(settings::Message::Preset(Preset::Buffy)));
+        let _ = app.update(Message::Settings(settings::Message::Save));
+        assert!(app.notice.as_deref().unwrap().contains("Theme settings"));
+        assert_eq!(app.palette(), Preset::Buffy.palette());
+        assert_eq!(app.palette, Palette::default());
     }
 }

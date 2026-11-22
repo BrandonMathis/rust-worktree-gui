@@ -6,7 +6,7 @@ use iced::widget::overlay::menu;
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 use iced::{keyboard, mouse};
 
-use crate::style;
+use crate::{style, theme::Palette};
 
 const WIDTH: f32 = 174.0;
 
@@ -17,6 +17,7 @@ struct RowMenu<T, Message> {
     on_select: Box<dyn Fn(T) -> Message>,
     appearance: <Theme as menu::Catalog>::Class<'static>,
     plus: bool,
+    palette: Palette,
 }
 
 struct State {
@@ -31,19 +32,21 @@ pub fn show<T, Message>(
     key: String,
     options: Vec<T>,
     on_select: impl Fn(T) -> Message + 'static,
+    palette: Palette,
 ) -> Element<'static, Message>
 where
     T: Clone + ToString + 'static,
     Message: 'static,
 {
-    trigger(key, options, on_select, false)
+    trigger(key, options, on_select, false, palette)
 }
 
 pub fn add<T: Clone + ToString + 'static, Message: 'static>(
     options: Vec<T>,
     on_select: impl Fn(T) -> Message + 'static,
+    palette: Palette,
 ) -> Element<'static, Message> {
-    trigger("projects-add".into(), options, on_select, true)
+    trigger("projects-add".into(), options, on_select, true, palette)
 }
 
 fn trigger<T: Clone + ToString + 'static, Message: 'static>(
@@ -51,13 +54,15 @@ fn trigger<T: Clone + ToString + 'static, Message: 'static>(
     options: Vec<T>,
     on_select: impl Fn(T) -> Message + 'static,
     plus: bool,
+    palette: Palette,
 ) -> Element<'static, Message> {
     Element::new(RowMenu {
         key,
         options,
         on_select: Box::new(on_select),
-        appearance: Box::new(style::action_menu),
+        appearance: Box::new(style::action_menu(palette)),
         plus,
+        palette,
     })
 }
 
@@ -157,6 +162,7 @@ impl<T: Clone + ToString, Message> Widget<Message, Theme, Renderer> for RowMenu<
         _: &Rectangle,
     ) {
         use iced::advanced::Renderer as _;
+        let p = self.palette;
         let bounds = layout.bounds();
         let highlight = cursor.is_over(bounds) || tree.state.downcast_ref::<State>().open;
         if highlight {
@@ -166,7 +172,7 @@ impl<T: Clone + ToString, Message> Widget<Message, Theme, Renderer> for RowMenu<
                     border: iced::border::rounded(3),
                     ..Default::default()
                 },
-                style::PURPLE.scale_alpha(0.22),
+                p.purple.scale_alpha(0.22),
             );
         }
         let mut paint = |x, y, width, height, color| {
@@ -181,8 +187,8 @@ impl<T: Clone + ToString, Message> Widget<Message, Theme, Renderer> for RowMenu<
         };
         let (x, y) = (bounds.center_x(), bounds.center_y());
         if self.plus {
-            paint(x - 5.0, y - 0.75, 10.0, 1.5, style::PURPLE);
-            paint(x - 0.75, y - 5.0, 1.5, 10.0, style::PURPLE);
+            paint(x - 5.0, y - 0.75, 10.0, 1.5, p.purple);
+            paint(x - 0.75, y - 5.0, 1.5, 10.0, p.purple);
         } else {
             for offset in [-4.0, 0.0, 4.0] {
                 paint(
@@ -190,7 +196,7 @@ impl<T: Clone + ToString, Message> Widget<Message, Theme, Renderer> for RowMenu<
                     y + offset - 1.0,
                     2.0,
                     2.0,
-                    if highlight { style::TEXT } else { style::MUTED },
+                    if highlight { p.foreground } else { p.muted() },
                 );
             }
         }
