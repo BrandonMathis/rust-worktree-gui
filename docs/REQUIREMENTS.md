@@ -55,20 +55,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 
 ## Requirements and verification
 
-| Area | Requirements | Covered by automated tests |
-| --- | --- | --- |
-| Projects | 9 | 9 |
-| Worktrees | 8 | 8 |
-| Terminal sessions | 12 | 10 |
-| Terminal preferences | 9 | 6 |
-| Actions and rename | 8 | 8 |
-| Pull requests | 6 | 6 |
-| Interface | 11 | 5 |
-| Constraints | 7 | 5 |
-| Settings and theme | 10 | 8 |
-| **Total** | **80** | **65** |
-
-The 15 requirements without automated tests are about visual rendering or OS integration, such as blur, tooltips, font matching and Finder opening. They're checked manually; each FRD document marks them **Manual** with the check to perform.
+Each requirement in [docs/frd/](frd/README.md) names the automated test that verifies it. Requirements that can't be unit-tested, such as visual rendering or OS integration (blur, tooltips, font matching, Finder opening), are marked **Manual**, with the check to perform.
 
 ## Needs
 

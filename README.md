@@ -58,6 +58,8 @@ cargo llvm-cov --locked                                 # coverage (needs llvm-t
 
 GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.
 
+Security checks (daily RustSec audit, dependency review, CodeQL, workflow audit) run in `.github/workflows/security.yml`, and a weekly report flags dependencies that are falling out of date or support. Dependabot proposes minor and major updates only; patch releases arrive only as security fixes. [SECURITY.md](SECURITY.md) explains the policy and how to report a vulnerability.
+
 For a native smoke test, open a linked worktree and run `pwd`, export a shell variable, then switch away and back. Check the variable both after switching and after restarting the app. Resize the window or split a tmux pane to check that the terminal redraws correctly. To check the error for a missing binary, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
 
 See [PLAN.md](PLAN.md) for the original external-window prototype.

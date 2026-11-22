@@ -16,6 +16,8 @@ cargo test --locked                                  # all tests; add a name to 
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
 cargo deny check                                     # advisories, licenses, sources (deny.toml)
 cargo llvm-cov --locked                              # coverage; CI enforces a line-coverage floor
+ruby scripts/dependency_health.rb                    # out-of-date / out-of-support report (network)
+ruby scripts/test/dependency_health_test.rb          # tests for that report
 ```
 
 Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
@@ -24,6 +26,7 @@ Format, clippy and test must pass before you call work done. CI (`.github/workfl
 
 - `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary. `docs/CODE_REVIEW.md` lists known issues and planned refactors.
 - When you add or change behavior, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
+- Don't keep requirement counts or totals in `docs/frd/README.md` or `docs/REQUIREMENTS.md`. Every feature would edit the same lines and cause merge conflicts.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
 - `PLAN.md` is the original external-Alacritty plan and is historical. Don't treat it as current.
 
@@ -60,6 +63,15 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 - **UI:** dark Dracula theme by default, 3px rounded corners, compact. Don't add padding to the terminal pane, and don't let sidebar labels wrap. Check visual changes with a macOS screenshot (`screencapture`) at the default (1120×720) and minimum (820×440) window sizes. Colors come from the `Palette` passed into each view and style (`style::panel(p, Panel::Glass)`, `p.muted()`); never hard-code a color in a view.
 - Errors are user-facing `String`s shown in the notice bar. Never `unwrap` or `panic` on I/O or subprocess results outside tests.
 - Keep `pub` minimal. This is a single binary crate.
+
+## Dependencies and supply chain
+
+Read `SECURITY.md` before changing `.github/dependabot.yml`, `deny.toml` or a workflow.
+
+- Dependabot opens version PRs only for minor and major releases (`allow: update-types`). Patch releases arrive only as security updates. Never express this as an `ignore` on `semver-patch`: `ignore` also blocks security updates.
+- Pin GitHub Actions to a full commit SHA with a `# vX.Y.Z` comment, and pin tools that CI installs to a version. Give each workflow `permissions: {}` and grant per job. Use `persist-credentials: false` on checkout.
+- Add a crate only when it's needed. Prefer widely used crates with recent releases, and check that `cargo deny check` still passes. A new `[advisories] ignore` entry in `deny.toml` needs a `reason`.
+- Helper scripts are Ruby using only the standard library (`scripts/`), so CI needs no extra installs.
 
 ## Tests
 
