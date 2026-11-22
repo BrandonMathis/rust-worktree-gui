@@ -6,6 +6,8 @@ pub const MUTED: Color = Color::from_rgb8(171, 173, 196);
 pub const PURPLE: Color = Color::from_rgb8(189, 147, 249);
 pub const GREEN: Color = Color::from_rgb8(80, 250, 123);
 pub const RED: Color = Color::from_rgb8(255, 85, 85);
+pub const ORANGE: Color = Color::from_rgb8(255, 184, 108);
+pub const CYAN: Color = Color::from_rgb8(139, 233, 253);
 const EDGE: Color = Color::from_rgba8(189, 174, 234, 0.22);
 const BASE: Color = Color::from_rgba8(24, 23, 35, 0.91);
 
@@ -75,6 +77,22 @@ pub fn nav(_: &Theme, status: button::Status) -> button::Style {
         button::Status::Hovered => Color::from_rgba8(189, 147, 249, 0.14),
         button::Status::Pressed => Color::from_rgba8(189, 147, 249, 0.23),
         _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(fill.into()),
+        text_color: TEXT,
+        border: border(Color::TRANSPARENT, 0.0),
+        ..button::Style::default()
+    }
+}
+
+/// Project rows in the sidebar: a faint fill at rest so they read as section
+/// headers above their (transparent) worktree rows.
+pub fn project(_: &Theme, status: button::Status) -> button::Style {
+    let fill = match status {
+        button::Status::Hovered => Color::from_rgba8(189, 147, 249, 0.16),
+        button::Status::Pressed => Color::from_rgba8(189, 147, 249, 0.24),
+        _ => Color::from_rgba8(248, 248, 242, 0.05),
     };
     button::Style {
         background: Some(fill.into()),
