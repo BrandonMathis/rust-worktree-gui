@@ -43,7 +43,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `app/pull_requests.rs` | PR lookups per worktree and the header badge. |
 | `app/sessions.rs` | tmux session badges (live, new output, bell) from a background `list-sessions` poll. |
 | `app/auto_refresh.rs`, `watch.rs` | Automatic refresh on window focus and when a repository's Git metadata fingerprint changes (polled with `stat`). |
-| `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, focus, and the header status and pane for a worktree. |
+| `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, switching the running client to another worktree (`switch-client`, with a full-connect fallback), and the header status and pane. |
 | `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
 | `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |
 | `app/tests.rs` | State-machine tests driven through `App::update`. |
@@ -52,7 +52,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `theme.rs` | The palette (eleven Dracula colors), presets, hex/HSV conversion, and the saved `theme.json`. |
 | `settings.rs`, `color_wheel.rs` | Full-window Settings modal (a nested Elm component returning an `Outcome`); canvas hue/saturation wheel. |
 | `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup, read-only session activity. |
-| `terminal.rs` | Wraps the `iced_term` widget (`Console`). |
+| `terminal.rs` | Wraps the `iced_term` widget (`Console`): the worktree it shows and its tmux client's pid. |
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
 | `pull_request.rs` | `gh pr view` lookup and validation of the HTTPS PR URL. |
 | `actions.rs` | Open in Finder or VS Code, copy path. |

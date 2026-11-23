@@ -179,6 +179,8 @@ pub enum Message {
     PullRequestOpened(Result<(), String>),
     Reconnect,
     Prepared(u64, Result<iced_term::settings::BackendSettings, String>),
+    /// The running terminal's tmux client switched sessions (or failed to).
+    Switched(u64, Result<(), String>),
     Detach,
     Terminal(iced_term::Event),
     WindowOpened(iced::window::Id),
@@ -302,11 +304,12 @@ impl App {
     }
 
     /// Resets what belongs to the previous selection: the terminal detaches
-    /// (its tmux session keeps running) and an open rename draft is dropped.
+    /// (its tmux session keeps running) unless it can switch to the new
+    /// worktree, and an open rename draft is dropped.
     /// The header's PR badge needs no reset, because it is read from the
     /// selected worktree each time (`selected_pull_request`).
     fn on_selection_changed(&mut self) {
-        self.console = ConsoleState::Detached;
+        self.keep_or_detach_terminal();
         self.worktree_name_draft = None;
     }
 
@@ -317,10 +320,9 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let terminal = if let ConsoleState::Attached(console) = &self.console {
-            console.subscription().map(Message::Terminal)
-        } else {
-            Subscription::none()
+        let terminal = match self.console.console() {
+            Some(console) => console.subscription().map(Message::Terminal),
+            None => Subscription::none(),
         };
         let settings = if self.settings.is_some() {
             iced::event::listen_with(settings_keys)

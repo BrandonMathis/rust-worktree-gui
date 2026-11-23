@@ -829,3 +829,89 @@ fn session_badges_show_live_output_and_bells_and_clear_when_selected() {
     assert_eq!(badge(&app, &linked), None);
     assert!(app.notice.is_none());
 }
+
+/// Attaches a real terminal (running a shell that just waits, not tmux) to
+/// the selected worktree, as a finished connection would.
+fn attach_terminal(app: &mut App, worktree: &Path) {
+    let ConsoleState::Connecting(id) = app.console else {
+        panic!("expected a connection in progress");
+    };
+    let shell = iced_term::settings::BackendSettings {
+        program: "/bin/sh".into(),
+        args: vec!["-c".into(), "sleep 30".into()],
+        working_directory: Some(worktree.to_path_buf()),
+        env: Default::default(),
+    };
+    let _ = app.update(Message::Prepared(id, Ok(shell)));
+    assert!(matches!(app.console, ConsoleState::Attached(_)));
+}
+
+fn switch_id(app: &App) -> u64 {
+    match app.console {
+        ConsoleState::Switching { id, .. } => id,
+        _ => panic!("expected a switch in progress"),
+    }
+}
+
+#[test]
+fn switching_worktrees_reuses_the_running_terminal_client() {
+    let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    attach_terminal(&mut app, &root);
+    let terminal = app.console.console().unwrap().id();
+
+    // Another worktree: the same terminal's client switches sessions.
+    let task = app.update(Message::SelectWorktree(id, linked.clone()));
+    assert_eq!(task.units(), 2, "tmux switch-client and PR lookup");
+    let switch = switch_id(&app);
+    assert_eq!(app.console.console().unwrap().id(), terminal);
+    assert_eq!(app.update(Message::Reconnect).units(), 0, "one at a time");
+    let _ = app.update(Message::Switched(switch - 1, Ok(())));
+    assert_eq!(switch_id(&app), switch, "a stale result is ignored");
+    let _ = app.update(Message::Switched(switch, Ok(())));
+    let ConsoleState::Attached(console) = &app.console else {
+        panic!("expected the terminal to stay attached");
+    };
+    assert_eq!(
+        (console.id(), console.worktree()),
+        (terminal, linked.as_path())
+    );
+
+    // The user moves on while a switch runs: the next switch follows.
+    let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    let to_root = switch_id(&app);
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    assert_eq!(switch_id(&app), to_root, "no second switch-client at once");
+    assert_eq!(app.update(Message::Switched(to_root, Ok(()))).units(), 1);
+    let to_linked = switch_id(&app);
+    assert_ne!(to_linked, to_root);
+
+    // A failed switch falls back to a fresh connection.
+    let task = app.update(Message::Switched(to_linked, Err("no client".into())));
+    assert_eq!(task.units(), 1, "tmux prepare");
+    assert!(matches!(app.console, ConsoleState::Connecting(_)));
+    assert!(app.console.console().is_none(), "the old terminal is gone");
+
+    // Detach, and the project overview, still detach.
+    attach_terminal(&mut app, &linked);
+    let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    let _ = app.update(Message::Detach);
+    assert!(matches!(app.console, ConsoleState::Detached));
+    let _ = app.update(Message::Reconnect);
+    attach_terminal(&mut app, &root);
+    app.select(id, None);
+    assert!(matches!(app.console, ConsoleState::Detached));
+}
+
+#[test]
+fn selecting_an_unavailable_worktree_detaches_instead_of_switching() {
+    let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    std::fs::rename(&linked, root.with_file_name("moved")).unwrap();
+    refresh_now(&mut app, id);
+    let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    attach_terminal(&mut app, &root);
+
+    let task = app.update(Message::SelectWorktree(id, linked));
+    assert_eq!(task.units(), 0);
+    assert!(matches!(app.console, ConsoleState::Detached));
+}

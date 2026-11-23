@@ -13,18 +13,7 @@ const SOCKET: &str = "worktree-browser";
 const OVERRIDE: &str = "WORKTREE_BROWSER_TMUX";
 
 pub fn prepare(common_dir: &Path, worktree: &Path) -> Result<BackendSettings, String> {
-    let worktree = worktree.canonicalize().map_err(|error| {
-        format!(
-            "Could not open worktree {}: {error}. Refresh to check Git again.",
-            worktree.display()
-        )
-    })?;
-    if !worktree.is_dir() {
-        return Err(format!(
-            "Worktree directory is unavailable: {}",
-            worktree.display()
-        ));
-    }
+    let worktree = canonical_worktree(worktree)?;
     let executable = find_tmux()?;
     let program = executable.to_str().ok_or_else(|| {
         format!(
@@ -35,6 +24,95 @@ pub fn prepare(common_dir: &Path, worktree: &Path) -> Result<BackendSettings, St
     let names = SessionNames::new(common_dir, &worktree);
     let name = names.migrate(|| tmux_command(&executable));
     Ok(settings(program.to_owned(), name, worktree))
+}
+
+/// Switches the tmux client with process id `client_pid` (the one running
+/// in the app's terminal) to `worktree`'s session, so the running terminal
+/// is reused instead of starting a new client. A missing session is created
+/// first, detached, in the worktree directory. Blocking: run it off the UI
+/// thread. On any error the caller falls back to `prepare`.
+pub fn switch_client(client_pid: u32, common_dir: &Path, worktree: &Path) -> Result<(), String> {
+    let executable = find_tmux()?;
+    switch_client_with(
+        || tmux_command(&executable),
+        client_pid,
+        common_dir,
+        worktree,
+    )
+}
+
+fn switch_client_with(
+    tmux: impl Fn() -> Command,
+    client_pid: u32,
+    common_dir: &Path,
+    worktree: &Path,
+) -> Result<(), String> {
+    let worktree = canonical_worktree(worktree)?;
+    let names = SessionNames::new(common_dir, &worktree);
+    let name = names.migrate(&tmux).to_owned();
+    if !has_session(tmux(), &name) {
+        // Like the terminal in `prepare`, the first pane inherits this
+        // command's working directory: no tmux format expansion of `-c`,
+        // and non-UTF-8 paths survive.
+        let mut create = tmux();
+        create
+            .current_dir(&worktree)
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .args(["new-session", "-d", "-s", &name]);
+        run(&mut create, "create the tmux session")?;
+    }
+    let client = client_name(tmux(), client_pid)
+        .ok_or("The terminal's tmux client is not attached to the server.")?;
+    run(
+        tmux().args(["switch-client", "-c", &client, "-t", &format!("={name}")]),
+        "switch the tmux client",
+    )
+}
+
+/// The name tmux uses for the client process `pid` (usually its tty).
+fn client_name(mut tmux: Command, pid: u32) -> Option<String> {
+    let out = tmux
+        .args(["list-clients", "-F", "#{client_pid}\t#{client_name}"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| {
+            let (client_pid, name) = line.split_once('\t')?;
+            (client_pid.parse() == Ok(pid)).then(|| name.to_owned())
+        })
+}
+
+fn canonical_worktree(worktree: &Path) -> Result<PathBuf, String> {
+    let canonical = worktree.canonicalize().map_err(|error| {
+        format!(
+            "Could not open worktree {}: {error}. Refresh to check Git again.",
+            worktree.display()
+        )
+    })?;
+    if !canonical.is_dir() {
+        return Err(format!(
+            "Worktree directory is unavailable: {}",
+            canonical.display()
+        ));
+    }
+    Ok(canonical)
+}
+
+fn run(command: &mut Command, action: &str) -> Result<(), String> {
+    let out = command
+        .output()
+        .map_err(|error| format!("Could not {action}: {error}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        Err(format!("Could not {action}: {}", stderr.trim()))
+    }
 }
 
 pub fn pane_directory(common_dir: &Path, worktree: &Path) -> Option<PathBuf> {
@@ -438,6 +516,89 @@ mod tests {
         // A server that isn't running is quiet: no sessions, no error.
         drop(server);
         assert!(list_sessions(Command::new("/nonexistent/tmux")).is_empty());
+    }
+
+    #[test]
+    fn switches_the_running_client_to_another_worktree_session_without_a_new_client() {
+        use crate::{terminal::Console, terminal_config::Preferences};
+        let Some(server) = PrivateServer::start() else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let (first, second) = (
+            tmp.path().join("first tree"),
+            tmp.path().join("second tree"),
+        );
+        for dir in [&first, &second] {
+            std::fs::create_dir(dir).unwrap();
+        }
+        let common_dir = PathBuf::from("/repo/.git");
+        let name = |dir: &Path| {
+            SessionNames::new(&common_dir, &dir.canonicalize().unwrap())
+                .short()
+                .to_owned()
+        };
+
+        // The app's terminal: a tmux client attached to the first worktree's
+        // session, in a real PTY, but on the private server.
+        let mut backend = settings(
+            server.program.to_str().unwrap().to_owned(),
+            &name(&first),
+            first.canonicalize().unwrap(),
+        );
+        let socket = server.socket.to_str().unwrap().to_owned();
+        backend.args = ["-S", &socket, "-f", "/dev/null", "-u"]
+            .into_iter()
+            .map(str::to_owned)
+            .chain(backend.args.into_iter().skip(2)) // Drop `-L worktree-browser`.
+            .collect();
+        backend.env.insert("SHELL".into(), "/bin/sh".into());
+        let console = Console::open(1, first.clone(), backend, &Preferences::default(), 1.0)
+            .expect("the terminal starts");
+        let clients = || {
+            let out = server
+                .command()
+                .args(["list-clients", "-F", "#{client_pid} #{session_name}"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        let wait_for = |expected: &str| {
+            for _ in 0..100 {
+                if clients() == expected {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert_eq!(clients(), expected);
+        };
+        let pid = console.client_pid();
+        wait_for(&format!("{pid} {}", name(&first)));
+
+        switch_client_with(|| server.command(), pid, &common_dir, &second).unwrap();
+        wait_for(&format!("{pid} {}", name(&second)));
+        assert!(has_session(server.command(), &name(&first)), "kept running");
+        let out = server
+            .command()
+            .args(["display-message", "-p", "-t"])
+            .arg(format!("={}:", name(&second)))
+            .arg("#{pane_current_path}")
+            .output()
+            .unwrap();
+        assert_eq!(
+            Path::new(String::from_utf8_lossy(&out.stdout).trim()),
+            second.canonicalize().unwrap(),
+            "the new session starts in its worktree"
+        );
+
+        // Switching back reuses the existing session.
+        switch_client_with(|| server.command(), pid, &common_dir, &first).unwrap();
+        wait_for(&format!("{pid} {}", name(&first)));
+
+        // A client that isn't attached fails, so the app falls back to a
+        // fresh connection.
+        assert!(switch_client_with(|| server.command(), u32::MAX, &common_dir, &second).is_err());
+        drop(console);
     }
 
     #[test]

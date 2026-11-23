@@ -64,6 +64,7 @@ impl App {
             }
             Message::Reconnect => self.connect(),
             Message::Prepared(id, result) => self.prepared(id, result),
+            Message::Switched(id, result) => self.switched(id, result),
             Message::Detach => {
                 self.detach();
                 Task::none()
