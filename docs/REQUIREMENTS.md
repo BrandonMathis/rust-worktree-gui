@@ -38,7 +38,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - If the selected worktree's branch has a GitHub pull request (open first, otherwise the newest), a **PR #N** button with its state appears in the header. Clicking it opens the PR in your browser. This uses your existing `gh` login, and the button stays hidden if anything goes wrong.
 
 **Look and layout**
-- Dark Dracula theme by default, 3-pixel rounded corners, translucent "glass" panels with macOS blur.
+- Dark Dracula theme by default, 3-pixel rounded corners, translucent "glass" panels with macOS blur. Panels in the window's bottom corners follow the macOS window's own corner curve.
 - Compact by design: a single-row header, a narrow sidebar with names that never wrap (hover for details), and a terminal with no padding.
 - The sidebar can be hidden for a full-width terminal. While it's hidden, hovering the toggle shows the sidebar as a temporary overlay.
 

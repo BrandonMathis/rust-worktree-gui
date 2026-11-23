@@ -45,6 +45,7 @@ use crate::{
     git::{Checkout, Worktree},
     pull_request::PullRequest,
     settings,
+    style::Corners,
     terminal_config::Preferences,
     theme::{self, Palette},
     tmux::SessionActivity,
@@ -97,6 +98,8 @@ pub struct App {
     console: ConsoleState,
     terminal_preferences: Preferences,
     window_scale: f32,
+    /// Rounding for panels in the window's bottom corners (macOS only).
+    window_corners: Corners,
     quit_pending: bool,
     sidebar_visible: bool,
     sidebar_preview: SidebarPreview,
@@ -219,8 +222,12 @@ impl std::fmt::Display for MenuAction {
 }
 
 impl App {
-    pub fn new(preferences: Result<Preferences, String>) -> (Self, Task<Message>) {
+    pub fn new(
+        preferences: Result<Preferences, String>,
+        window_radius: f32,
+    ) -> (Self, Task<Message>) {
         let (mut app, task) = Self::from_bookmarks(Store::open());
+        app.window_corners = Corners::window(window_radius);
         match preferences {
             Ok(preferences) => app.terminal_preferences = preferences,
             Err(error) if app.notice.is_none() => app.notice = Some(error),
@@ -278,6 +285,7 @@ impl App {
             console: ConsoleState::default(),
             terminal_preferences: Preferences::default(),
             window_scale: 1.0,
+            window_corners: Corners::NONE,
             quit_pending: false,
             sidebar_visible: true,
             sidebar_preview: SidebarPreview::default(),
