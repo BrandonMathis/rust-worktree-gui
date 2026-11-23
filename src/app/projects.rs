@@ -216,6 +216,41 @@ impl App {
         }
     }
 
+    /// Moves a bookmark before another project, or to the end when `before` is `None`.
+    pub(super) fn reorder_project(
+        &mut self,
+        source: ProjectId,
+        before: Option<ProjectId>,
+    ) -> Result<(), String> {
+        let index = |id| self.projects.iter().position(|p| p.id == id);
+        let Some(from) = index(source) else {
+            return Ok(());
+        };
+        let slot = match before {
+            Some(id) => match index(id) {
+                Some(slot) => slot,
+                None => return Ok(()),
+            },
+            None => self.projects.len(),
+        };
+        // Removing the source shifts insertion slots below it up by one.
+        let to = slot - usize::from(slot > from);
+        if from == to {
+            return Ok(());
+        }
+
+        let mut bookmarks: Vec<_> = self.projects.iter().map(Project::bookmark).collect();
+        let bookmark = bookmarks.remove(from);
+        bookmarks.insert(to, bookmark);
+        self.save(bookmarks)?;
+
+        // Move the live project, not just its bookmark: all its worktree state
+        // stays with it, and selection and async results refer to its stable ID.
+        let project = self.projects.remove(from);
+        self.projects.insert(to, project);
+        Ok(())
+    }
+
     pub(super) fn forget(&mut self, id: ProjectId) -> Result<(), String> {
         self.save(
             self.projects

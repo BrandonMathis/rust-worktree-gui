@@ -183,6 +183,88 @@ fn refresh_now(app: &mut App, id: ProjectId) {
 }
 
 #[test]
+fn reordering_projects_restores_order_without_switching_worktrees() {
+    let (tmp, mut app, first, root, linked) = app_with_linked_checkout();
+    let (_second_tmp, second_root) = fixture();
+    let (_third_tmp, third_root) = fixture();
+    let second = app
+        .bookmark(PickMode::Add, git::discover(&second_root).unwrap())
+        .unwrap();
+    let third = app
+        .bookmark(PickMode::Add, git::discover(&third_root).unwrap())
+        .unwrap();
+    app.select(first, Some(linked.clone()));
+    app.projects[0].expanded = true;
+    app.console = ConsoleState::Connecting(9);
+    let selection = app.selection.clone().unwrap();
+    app.rename_worktree(&selection, "Review").unwrap();
+
+    for (source, before, expected) in [
+        (first, None, [second, third, first]),
+        (third, Some(second), [third, second, first]),
+    ] {
+        let task = app.update(Message::ReorderProject { source, before });
+        assert_eq!(task.units(), 0, "reordering must not reconnect or refresh");
+        assert_eq!(
+            app.projects.iter().map(|p| p.id).collect::<Vec<_>>(),
+            expected
+        );
+    }
+    assert_eq!(app.selection.as_ref(), Some(&selection));
+    assert!(matches!(app.console, ConsoleState::Connecting(9)));
+    let moved = &app.projects[2];
+    assert!(moved.expanded);
+    assert_eq!(
+        moved.worktree_name(moved.worktree(&linked).unwrap()),
+        "Review"
+    );
+
+    let (restored, _) =
+        App::from_bookmarks(Store::open_path(tmp.path().join("config/projects.json")));
+    assert_eq!(
+        restored
+            .projects
+            .iter()
+            .map(|p| &p.checkout.root)
+            .collect::<Vec<_>>(),
+        [&third_root, &second_root, &root],
+    );
+    assert_eq!(restored.projects[2].worktree_names[&linked], "Review");
+}
+
+#[test]
+fn a_failed_reorder_keeps_the_original_order_and_shows_the_error() {
+    let (tmp, mut app, first, _, _) = app_with_linked_checkout();
+    let (_other_tmp, root) = fixture();
+    let other = app
+        .bookmark(PickMode::Add, git::discover(&root).unwrap())
+        .unwrap();
+    // Put a directory at the file path so the atomic rename cannot succeed.
+    let path = tmp.path().join("config/projects.json");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+
+    let _ = app.update(Message::ReorderProject {
+        source: first,
+        before: Some(other),
+    });
+    assert!(
+        app.notice.is_none(),
+        "dropping back in the same slot must not save"
+    );
+    let _ = app.update(Message::ReorderProject {
+        source: other,
+        before: Some(first),
+    });
+    assert!(app.notice.as_ref().unwrap().contains("Could not save"));
+    assert_eq!(
+        app.projects.iter().map(|p| p.id).collect::<Vec<_>>(),
+        [first, other]
+    );
+    assert!(path.is_dir());
+}
+
+#[test]
 fn startup_restores_bookmarks_and_refreshes_each_project() {
     let (tmp, first) = fixture();
     let second = tmp.path().join("second");
