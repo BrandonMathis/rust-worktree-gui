@@ -17,6 +17,7 @@
 //! | `terminal_pane` | The embedded terminal's connection state |
 //! | `creation` | The New Project / New Worktree form (a nested component) |
 //! | `sidebar` | Sidebar state and view |
+//! | `project_list` | Sidebar project drag-and-drop |
 //! | `view` | The window layout, workspace and worktree header |
 //! | `widgets` | Small shared view helpers |
 //!
@@ -26,6 +27,7 @@
 
 mod auto_refresh;
 mod creation;
+mod project_list;
 mod projects;
 mod pull_requests;
 mod sessions;
@@ -181,6 +183,10 @@ pub enum Message {
     SidebarPreviewExpired(u64),
     Refreshed(usize, Result<Vec<Worktree>, String>),
     ToggleProject(ProjectId),
+    ReorderProject {
+        source: ProjectId,
+        before: Option<ProjectId>,
+    },
     SelectWorktree(ProjectId, PathBuf),
     PullRequestsListed(ProjectId, u64, Option<Vec<PullRequest>>),
     OpenPullRequest,

@@ -1,6 +1,7 @@
 //! The sidebar: project and worktree rows, its toolbar, and the hover preview
 //! shown while it is hidden.
 
+use super::project_list::{GRIP_WIDTH, reorderable};
 use super::widgets::{icon_button, settings_button, single_line, with_row_menu};
 use super::{App, Message, Project, Selection};
 use crate::create::ProjectChoice;
@@ -206,18 +207,7 @@ impl App {
         ]
         .spacing(2)
         .align_y(Center);
-        let mut list = column![].spacing(2);
-        if self.projects.is_empty() {
-            list = list.push(
-                text(if self.store.is_some() {
-                    "No bookmarked projects"
-                } else {
-                    "Bookmarks are unavailable"
-                })
-                .size(13)
-                .color(p.muted()),
-            );
-        }
+        let mut groups = Vec::with_capacity(self.projects.len());
         // Struct update syntax (`..base`) copies the user's font family and only
         // changes the weight, like `{ ...font, weight: 'bold' }` in JS.
         let bold = iced::Font {
@@ -232,23 +222,32 @@ impl App {
                 icons::chevron_right(15, p.foreground)
             };
             let name = project.name().replace(['\n', '\r'], " ");
+            let mut header = row![].align_y(Center);
+            if self.projects.len() > 1 {
+                // The button's 4px left padding and the grip slot together
+                // define the grab area (see project_list::GRIP_WIDTH).
+                header =
+                    header.push(container(icons::grip(13, p.muted())).center_x(GRIP_WIDTH - 4));
+            }
             let project_button = button(
-                row![
-                    caret,
-                    // Like `single_line`, but bold so projects stand apart from worktrees.
-                    container(
-                        text(name)
-                            .size(13)
-                            .font(bold)
-                            .wrapping(iced::widget::text::Wrapping::None)
-                    )
-                    .clip(true)
-                    .width(Fill),
-                    refresh_error_marker(project.refresh_error.as_deref(), p),
-                    Space::new().width(22),
-                ]
-                .spacing(4)
-                .align_y(Center),
+                header.push(
+                    row![
+                        caret,
+                        // Like `single_line`, but bold so projects stand apart from worktrees.
+                        container(
+                            text(name)
+                                .size(13)
+                                .font(bold)
+                                .wrapping(iced::widget::text::Wrapping::None)
+                        )
+                        .clip(true)
+                        .width(Fill),
+                        refresh_error_marker(project.refresh_error.as_deref(), p),
+                        Space::new().width(22),
+                    ]
+                    .spacing(4)
+                    .align_y(Center),
+                ),
             )
             .width(Fill)
             .padding([5, 4])
@@ -258,15 +257,18 @@ impl App {
             } else {
                 style::button(p, Button::Project)
             });
-            list = list.push(with_row_menu(
+            let group = column![with_row_menu(
                 project_button,
                 Selection {
                     project: project.id,
                     worktree: None,
                 },
                 p,
-            ));
+            )]
+            .spacing(2)
+            .width(Fill);
             if !project.expanded {
+                groups.push((project.id, group.into()));
                 continue;
             }
             let mut children =
@@ -344,17 +346,34 @@ impl App {
                 }
             }
             // Indent worktrees under their project so the hierarchy reads at a glance.
-            list = list.push(
-                container(children)
-                    .padding(iced::padding::top(1).bottom(4).left(12))
-                    .width(Fill),
-            );
+            groups.push((
+                project.id,
+                group
+                    .push(
+                        container(children)
+                            .padding(iced::padding::top(1).bottom(4).left(12))
+                            .width(Fill),
+                    )
+                    .into(),
+            ));
         }
+        let list = if groups.is_empty() {
+            text(if self.store.is_some() {
+                "No bookmarked projects"
+            } else {
+                "Bookmarks are unavailable"
+            })
+            .size(13)
+            .color(p.muted())
+            .into()
+        } else {
+            reorderable(groups, p.purple)
+        };
         // The Settings gear sits in the bottom-left corner, below the list.
         container(
             column![
                 toolbar,
-                scrollable(list.width(Fill)).height(Fill),
+                scrollable(list).width(Fill).height(Fill),
                 settings_button(p),
             ]
             .spacing(5),

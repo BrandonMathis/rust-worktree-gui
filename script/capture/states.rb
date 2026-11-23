@@ -46,7 +46,7 @@ module CaptureStates
       size: "1120x720",
       covers: %w[
         src/app/view.rs src/app/sidebar.rs src/app/widgets.rs src/app/pull_requests.rs
-        src/app/sessions.rs src/app/terminal_pane.rs src/row_menu.rs
+        src/app/sessions.rs src/app/terminal_pane.rs src/app/project_list.rs src/row_menu.rs
         src/terminal.rs src/terminal_config.rs vendor/iced_term/src/**/*
       ],
       project: 0, worktree: "acme-api-session-tokens",

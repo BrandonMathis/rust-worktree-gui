@@ -23,6 +23,8 @@ WORKTREE_BROWSER_TMUX=/opt/homebrew/bin/tmux cargo run --locked
 2. Click a worktree to enter its shell. New panes default to `/bin/zsh` unless your tmux config chooses another shell or command. Reattaching leaves existing shells and commands untouched. Use `⌘C` and `⌘V` for selection copy and paste, `Ctrl+C` to interrupt, and your configured tmux prefix (then `[` for scrollback if you haven't remapped it).
 3. Switch worktrees to swap sessions. **Detach** disconnects the visible terminal without stopping it. Clicking the worktree or **Connect** attaches again. Press **⌘Q** to open the quit confirmation; press **Return** to quit or **Escape** to cancel. Closing the browser leaves sessions running. Exiting the last shell in a session ends it; the next connection starts a new shell.
 
+Drag the six-dot grip on a project header to reorder the **Projects** list. The insertion line shows where the project will land. The order is remembered when you reopen the app.
+
 To add a worktree, hover the project name and choose **⋮ → New Worktree…**. Choose a new branch, base ref, and checkout location, then confirm **Create Worktree**. The default base is `HEAD` of the selected checkout (or the project anchor). The app refreshes the project and opens the new worktree in the terminal. A newly initialized repository needs its first commit before it can have linked worktrees.
 
 Drag images, other files, or folders from Finder into the Worktree Browser window while a terminal is attached. Their paths are pasted into the active tmux pane, quoted when needed and separated by spaces. Dropping never presses Return or uploads the files.

@@ -25,9 +25,9 @@ ruby script/capture/test/states_test.rb              # tests for which screensho
 
 ## Requirements are the spec
 
-- `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary.
+- `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. There is no separate human summary; the FRD is the only requirements document, so don't recreate `docs/REQUIREMENTS.md`.
 - When you add or change behavior, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
-- Don't keep requirement counts or totals in `docs/frd/README.md` or `docs/REQUIREMENTS.md`. Every feature would edit the same lines and cause merge conflicts.
+- Don't keep requirement counts or totals in `docs/frd/README.md`. Every feature would edit the same lines and cause merge conflicts.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
 - `PLAN.md` is the original external-Alacritty plan and is historical. Don't treat it as current.
 
