@@ -666,3 +666,111 @@ fn failed_theme_save_keeps_the_modal_open_and_shows_the_error() {
     assert_eq!(app.palette(), Preset::Buffy.palette());
     assert_eq!(app.palette, Palette::default());
 }
+
+/// Answers every PR lookup in flight for `id`, numbering PRs from `first`.
+fn answer_pr_lookups(app: &mut App, id: ProjectId, first: u64) {
+    let project = app.projects.iter().find(|p| p.id == id).unwrap();
+    let pending: Vec<_> = project
+        .pull_requests
+        .iter()
+        .filter_map(|(path, check)| Some((path.clone(), check.request_id?)))
+        .collect();
+    for (number, (path, request)) in (first..).zip(pending) {
+        let pr = Some(PullRequest::for_test(number));
+        let _ = app.update(Message::PullRequestFound(id, path, request, pr));
+    }
+}
+
+/// Completes the refresh in flight for `id` with a fresh `git worktree list`.
+fn finish_refresh(app: &mut App, id: ProjectId) -> Task<Message> {
+    let project = app.projects.iter().find(|p| p.id == id).unwrap();
+    let refresh_id = project.refresh_id.unwrap();
+    let inventory = git::inventory(&project.checkout);
+    app.update(Message::Refreshed(refresh_id, inventory))
+}
+
+#[test]
+fn window_focus_refreshes_every_project_automatically() {
+    let (tmp, mut app, _id, _root, _linked) = app_with_linked_checkout();
+    let other = tmp.path().join("other repo");
+    std::fs::create_dir(&other).unwrap();
+    run_git(&other, &["init", "-q"]);
+    app.bookmark(PickMode::Add, git::discover(&other).unwrap())
+        .unwrap();
+
+    assert_eq!(app.update(Message::WindowFocused).units(), 2);
+    assert!(app.projects.iter().all(|p| p.refresh_id.is_some()));
+    assert!(
+        app.projects
+            .iter()
+            .all(|p| p.refresh_kind == RefreshKind::Automatic)
+    );
+    assert_eq!(
+        app.update(Message::WindowFocused).units(),
+        0,
+        "refreshes already in flight are not repeated"
+    );
+}
+
+#[test]
+fn automatic_refresh_keeps_pr_badges_and_runs_gh_only_for_changed_branches() {
+    let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    refresh_now(&mut app, id);
+    answer_pr_lookups(&mut app, id, 1);
+    assert!(app.projects[0].pull_request(&root).is_some());
+    assert!(app.projects[0].pull_request(&linked).is_some());
+
+    // Nothing changed: no `gh`, and the badges stay.
+    let _ = app.update(Message::WindowFocused);
+    assert_eq!(finish_refresh(&mut app, id).units(), 0);
+    assert!(app.projects[0].pull_request(&root).is_some());
+    assert!(app.projects[0].pull_request(&linked).is_some());
+
+    // The linked checkout switched branches outside the app: only it is
+    // looked up again. (All lookups share one task, so check which are in flight.)
+    let in_flight =
+        |app: &App, path: &Path| app.projects[0].pull_requests[path].request_id.is_some();
+    run_git(&linked, &["checkout", "-qb", "other"]);
+    let _ = app.update(Message::WindowFocused);
+    assert_eq!(finish_refresh(&mut app, id).units(), 1);
+    assert!(app.projects[0].pull_request(&root).is_some());
+    assert!(!in_flight(&app, &root));
+    assert!(app.projects[0].pull_request(&linked).is_none());
+    assert!(in_flight(&app, &linked));
+    answer_pr_lookups(&mut app, id, 3);
+
+    // Refresh pressed during an automatic refresh still re-checks every PR.
+    let _ = app.update(Message::WindowFocused);
+    let _ = app.update(Message::Refresh);
+    assert_eq!(finish_refresh(&mut app, id).units(), 1);
+    assert!(in_flight(&app, &root) && in_flight(&app, &linked));
+}
+
+#[test]
+fn changed_git_metadata_starts_an_automatic_refresh() {
+    let (_tmp, mut app, id, _root, _linked) = app_with_linked_checkout();
+    assert_eq!(app.update(Message::WatchTick).units(), 1);
+    assert_eq!(
+        app.update(Message::WatchTick).units(),
+        0,
+        "one check at a time"
+    );
+    let request = app.watch_request.unwrap();
+    let baseline = app.update(Message::Watched(request, vec![(id, 1)]));
+    assert_eq!(baseline.units(), 0, "the first fingerprint is a baseline");
+
+    let _ = app.update(Message::WatchTick);
+    let request = app.watch_request.unwrap();
+    let stale = app.update(Message::Watched(request - 1, vec![(id, 2)]));
+    assert_eq!(stale.units(), 0, "a stale check is ignored");
+    let unchanged = app.update(Message::Watched(request, vec![(id, 1)]));
+    assert_eq!(unchanged.units(), 0);
+    assert!(app.projects[0].refresh_id.is_none());
+
+    let _ = app.update(Message::WatchTick);
+    let request = app.watch_request.unwrap();
+    let changed = app.update(Message::Watched(request, vec![(id, 2)]));
+    assert_eq!(changed.units(), 1);
+    assert!(app.projects[0].refresh_id.is_some());
+    assert_eq!(app.projects[0].refresh_kind, RefreshKind::Automatic);
+}

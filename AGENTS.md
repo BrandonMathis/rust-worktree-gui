@@ -41,6 +41,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `app/update.rs` | `App::update`: one arm per message, each calling a named handler. Small handlers (quit, picker, menus, rename, Settings). |
 | `app/projects.rs` | Bookmarks, refresh from Git (keeps the last good inventory on error), selection reconcile, forget, display names. |
 | `app/pull_requests.rs` | PR lookups per worktree and the header badge. |
+| `app/auto_refresh.rs`, `watch.rs` | Automatic refresh on window focus and when a repository's Git metadata fingerprint changes (polled with `stat`). |
 | `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, focus, and the header status and pane for a worktree. |
 | `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
 | `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |

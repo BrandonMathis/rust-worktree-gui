@@ -18,5 +18,4 @@
 
 - Creating worktrees from the GUI (`PLAN.md` step 4).
 - `.app` bundle packaging.
-- File watching and automatic refresh.
 - Launching agents automatically (presets).

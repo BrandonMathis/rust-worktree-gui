@@ -1,6 +1,7 @@
 //! `App::update`: the reducer. Each arm hands its message to a named handler,
 //! most of which live in the module for their area.
 
+use super::pull_requests::Lookup;
 use super::{
     App, MenuAction, Message, PickMode, RenameDraft, Selection, WORKTREE_NAME_INPUT, background,
 };
@@ -25,6 +26,9 @@ impl App {
             Message::ProjectCreated(result) => self.project_created(result),
             Message::WorktreeCreated(id, result) => self.worktree_created(id, result),
             Message::Refresh => self.refresh_all(),
+            Message::WindowFocused => self.refresh_all_automatically(),
+            Message::WatchTick => self.watch_tick(),
+            Message::Watched(request, fingerprints) => self.watched(request, fingerprints),
             Message::ToggleSidebar => self.toggle_sidebar(),
             Message::SidebarHover(zone, entered) => self.sidebar_hover(zone, entered),
             Message::SidebarPreviewExpired(epoch) => self.sidebar_preview_expired(epoch),
@@ -35,7 +39,10 @@ impl App {
             }
             Message::SelectWorktree(id, path) => {
                 self.select(id, Some(path.clone()));
-                Task::batch([self.connect(), self.lookup_pull_requests(id, Some(&path))])
+                Task::batch([
+                    self.connect(),
+                    self.lookup_pull_requests(id, Lookup::Worktree(&path)),
+                ])
             }
             Message::PullRequestFound(id, path, request, pr) => {
                 self.pull_request_found(id, path, request, pr);

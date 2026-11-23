@@ -10,6 +10,7 @@
 //! | Module | Area |
 //! | --- | --- |
 //! | `update` | `App::update`, which hands each message to a handler |
+//! | `auto_refresh` | Refreshing on window focus and when Git metadata changes |
 //! | `projects` | Bookmarks, refreshing worktrees from Git, display names |
 //! | `pull_requests` | PR badge lookups |
 //! | `terminal_pane` | The embedded terminal's connection state |
@@ -22,6 +23,7 @@
 //! every submodule, while items defined *in* a submodule need `pub(super)` to
 //! be seen here or in a sibling.
 
+mod auto_refresh;
 mod creation;
 mod projects;
 mod pull_requests;
@@ -43,8 +45,10 @@ use crate::{
     settings,
     terminal_config::Preferences,
     theme::{self, Palette},
+    watch::Fingerprint,
 };
 use iced::{Subscription, Task};
+use projects::RefreshKind;
 use pull_requests::PullRequestCheck;
 use sidebar::SidebarPreview;
 pub use sidebar::SidebarZone;
@@ -79,6 +83,9 @@ pub struct App {
     selection: Option<Selection>,
     next_project_id: usize,
     next_refresh_id: usize,
+    /// The Git metadata check in flight, if any (see `auto_refresh`).
+    watch_request: Option<u64>,
+    next_watch_id: u64,
     next_console_id: u64,
     pr_request_id: u64,
     console: ConsoleState,
@@ -104,6 +111,10 @@ struct Project {
     worktree_names: BTreeMap<PathBuf, String>,
     expanded: bool,
     refresh_id: Option<usize>,
+    /// Why the refresh in flight runs; decides which PRs it looks up again.
+    refresh_kind: RefreshKind,
+    /// The last Git metadata fingerprint seen, to detect outside changes.
+    fingerprint: Option<Fingerprint>,
     /// The last worktree list Git returned successfully. `None` until the
     /// first refresh succeeds (or after the anchor is replaced).
     inventory: Option<Vec<Worktree>>,
@@ -138,6 +149,12 @@ pub enum Message {
     ProjectCreated(Result<Checkout, String>),
     WorktreeCreated(ProjectId, Result<PathBuf, String>),
     Refresh,
+    /// The window gained focus: refresh automatically.
+    WindowFocused,
+    /// Time to check Git metadata for outside changes.
+    WatchTick,
+    /// Fingerprints from a `WatchTick` check, tagged with its request id.
+    Watched(u64, Vec<(ProjectId, Fingerprint)>),
     ToggleSidebar,
     SidebarHover(SidebarZone, bool),
     SidebarPreviewExpired(u64),
@@ -223,6 +240,8 @@ impl App {
             selection: None,
             next_project_id: 0,
             next_refresh_id: 0,
+            watch_request: None,
+            next_watch_id: 0,
             next_console_id: 0,
             pr_request_id: 0,
             console: ConsoleState::default(),
@@ -292,7 +311,12 @@ impl App {
         } else {
             Subscription::none()
         };
-        Subscription::batch([terminal, settings, iced::event::listen_with(window_events)])
+        Subscription::batch([
+            terminal,
+            settings,
+            self.watch_subscription(),
+            iced::event::listen_with(window_events),
+        ])
     }
 
     /// The palette to draw with: the unsaved draft while Settings is open
@@ -323,6 +347,7 @@ fn window_events(
         iced::Event::Window(iced::window::Event::Rescaled(scale)) => {
             Some(Message::WindowScale(scale))
         }
+        iced::Event::Window(iced::window::Event::Focused) => Some(Message::WindowFocused),
         _ => None,
     }
 }

@@ -10,6 +10,18 @@ use iced::widget::{button, container, row, text, tooltip};
 use iced::{Center, Element, Task};
 use std::path::{Path, PathBuf};
 
+/// Which worktrees of a project to look up.
+#[derive(Clone, Copy)]
+pub(super) enum Lookup<'a> {
+    /// Every worktree with a branch (manual Refresh).
+    All,
+    /// Only worktrees with no answer or lookup yet (automatic refresh), so
+    /// `gh` doesn't run again for worktrees whose branch didn't change.
+    New,
+    /// The one worktree at this path (selecting it).
+    Worktree(&'a Path),
+}
+
 /// The PR lookup state of one worktree. `request_id` is set while a lookup
 /// is in flight, so a late answer to an older lookup is ignored.
 #[derive(Default)]
@@ -19,14 +31,10 @@ pub(super) struct PullRequestCheck {
 }
 
 impl App {
-    /// Starts a lookup for each worktree of project `id` (or only the one at
-    /// `only`) that has a branch and no lookup in flight. At most four `gh`
-    /// processes run at once.
-    pub(super) fn lookup_pull_requests(
-        &mut self,
-        id: ProjectId,
-        only: Option<&Path>,
-    ) -> Task<Message> {
+    /// Starts a lookup for each worktree of project `id` chosen by `scope`
+    /// that has a branch and no lookup in flight. At most four `gh` processes
+    /// run at once.
+    pub(super) fn lookup_pull_requests(&mut self, id: ProjectId, scope: Lookup) -> Task<Message> {
         let Some(project) = self.projects.iter_mut().find(|project| project.id == id) else {
             return Task::none();
         };
@@ -34,9 +42,12 @@ impl App {
             .worktrees()
             .iter()
             .filter(|tree| {
-                only.is_none_or(|path| tree.path == path)
-                    && tree.unavailable_reason().is_none()
-                    && !tree.detached
+                let in_scope = match scope {
+                    Lookup::Worktree(path) => tree.path == path,
+                    Lookup::New => !project.pull_requests.contains_key(&tree.path),
+                    Lookup::All => true,
+                };
+                in_scope && tree.unavailable_reason().is_none() && !tree.detached
             })
             .filter_map(|tree| Some((tree.path.clone(), tree.branch.clone()?)))
             .collect();

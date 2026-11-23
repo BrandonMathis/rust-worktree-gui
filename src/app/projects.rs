@@ -1,5 +1,6 @@
 //! Project bookmarks, refreshing worktrees from Git, and display names.
 
+use super::pull_requests::Lookup;
 use super::{App, ConsoleState, Message, PickMode, Project, ProjectId, Selection, background};
 use crate::config::ProjectBookmark;
 use crate::git::{self, Checkout, Worktree};
@@ -7,6 +8,16 @@ use crate::pull_request::PullRequest;
 use iced::Task;
 use std::collections::BTreeMap;
 use std::path::Path;
+
+/// Why a refresh runs. A manual Refresh looks up every PR again; an
+/// automatic one (window focus, Git metadata change) keeps the PR answers of
+/// worktrees whose branch didn't change, so it doesn't run `gh` for them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RefreshKind {
+    #[default]
+    Manual,
+    Automatic,
+}
 
 impl Project {
     pub(super) fn bookmark(&self) -> ProjectBookmark {
@@ -52,6 +63,8 @@ impl App {
             worktree_names: bookmark.worktree_names,
             expanded: false,
             refresh_id: None,
+            refresh_kind: RefreshKind::default(),
+            fingerprint: None,
             inventory: None,
             refresh_error: None,
             pull_requests: BTreeMap::new(),
@@ -239,17 +252,27 @@ impl App {
         Task::batch(ids.into_iter().map(|id| self.refresh(id)))
     }
 
+    /// Re-reads one project's worktrees from Git and looks up all its PRs again.
+    pub(super) fn refresh(&mut self, id: ProjectId) -> Task<Message> {
+        self.start_refresh(id, RefreshKind::Manual)
+    }
+
     /// Re-reads one project's worktrees from Git in the background. At most one
     /// refresh per project runs at a time; `refresh_id` identifies it, so a
     /// result for a refresh that was superseded (Replace Anchor) is ignored.
-    pub(super) fn refresh(&mut self, id: ProjectId) -> Task<Message> {
-        let Some(project) = self
-            .projects
-            .iter_mut()
-            .find(|p| p.id == id && p.refresh_id.is_none())
-        else {
+    pub(super) fn start_refresh(&mut self, id: ProjectId, kind: RefreshKind) -> Task<Message> {
+        let Some(project) = self.projects.iter_mut().find(|p| p.id == id) else {
             return Task::none();
         };
+        if project.refresh_id.is_some() {
+            // A manual Refresh pressed during an automatic one still gets its
+            // PR lookups when that refresh finishes.
+            if kind == RefreshKind::Manual {
+                project.refresh_kind = kind;
+            }
+            return Task::none();
+        }
+        project.refresh_kind = kind;
         let checkout = project.checkout.clone();
         let refresh_id = self.next_refresh_id;
         self.next_refresh_id += 1;
@@ -291,12 +314,32 @@ impl App {
                 return Task::none();
             }
         };
-        project.inventory = Some(trees);
+        let previous = project.inventory.replace(trees).unwrap_or_default();
         project.refresh_error = None;
-        // Old results can't be applied to a worktree that changed branches.
-        project.pull_requests.clear();
+        let scope = match project.refresh_kind {
+            RefreshKind::Manual => {
+                project.pull_requests.clear();
+                Lookup::All
+            }
+            // Old results can't be applied to a worktree that changed branches,
+            // but the rest are still current.
+            RefreshKind::Automatic => {
+                let current = project.inventory.as_deref().unwrap_or_default();
+                let branch = |trees: &[Worktree], path: &Path| {
+                    trees
+                        .iter()
+                        .find(|tree| tree.path == path)
+                        .map(|tree| tree.branch.clone())
+                };
+                project.pull_requests.retain(|path, _| {
+                    let now = branch(current, path);
+                    now.is_some() && now == branch(&previous, path)
+                });
+                Lookup::New
+            }
+        };
         self.reconcile_selection(id);
-        let lookup = self.lookup_pull_requests(id, None);
+        let lookup = self.lookup_pull_requests(id, scope);
         if let Some(path) = created {
             if self
                 .projects
