@@ -187,6 +187,7 @@ pub enum Message {
     Terminal(iced_term::Event),
     WindowOpened(iced::window::Id),
     WindowScale(f32),
+    FileDropped(PathBuf),
     QuitRequested(iced::window::Id),
     QuitAnswered(bool),
     Forget(ProjectId),
@@ -377,7 +378,7 @@ impl App {
 /// needs a plain `fn` (no captured state), so this lives outside `App`.
 fn window_events(
     event: iced::Event,
-    _: iced::event::Status,
+    status: iced::event::Status,
     id: iced::window::Id,
 ) -> Option<Message> {
     match event {
@@ -389,6 +390,11 @@ fn window_events(
             Some(Message::WindowScale(scale))
         }
         iced::Event::Window(iced::window::Event::Focused) => Some(Message::WindowFocused),
+        iced::Event::Window(iced::window::Event::FileDropped(path))
+            if status == iced::event::Status::Ignored =>
+        {
+            Some(Message::FileDropped(path))
+        }
         _ => None,
     }
 }

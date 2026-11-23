@@ -2,6 +2,36 @@ use super::*;
 use crate::git_fixtures::{fixture, run_git};
 
 #[test]
+fn only_completed_unhandled_file_drops_request_a_paste() {
+    use iced::{event::Status, window};
+
+    let id = window::Id::unique();
+    let path = PathBuf::from("/tmp/diagram draft.png");
+    let drop = iced::Event::Window(window::Event::FileDropped(path.clone()));
+    assert!(matches!(
+        window_events(drop.clone(), Status::Ignored, id),
+        Some(Message::FileDropped(dropped)) if dropped == path
+    ));
+    assert!(window_events(drop, Status::Captured, id).is_none());
+    assert!(
+        window_events(
+            iced::Event::Window(window::Event::FileHovered(path)),
+            Status::Ignored,
+            id,
+        )
+        .is_none()
+    );
+    assert!(
+        window_events(
+            iced::Event::Window(window::Event::FilesHoveredLeft),
+            Status::Ignored,
+            id,
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn collapsed_sidebar_previews_until_the_pointer_leaves_both_zones() {
     let (mut app, _) = App::from_bookmarks(Err("test store".into()));
     let _ = app.update(Message::SidebarHover(SidebarZone::Toggle, true));
