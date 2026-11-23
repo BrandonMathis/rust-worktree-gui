@@ -1,6 +1,8 @@
+use crate::actions::OPEN_TIMEOUT;
+use crate::runner::{self, Tool};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
 
 #[derive(Clone, Debug)]
@@ -41,14 +43,15 @@ struct View {
 }
 
 pub async fn lookup(worktree: &Path, branch: &str) -> Option<PullRequest> {
-    let cli = find_cli()?;
+    let cli = runner::find(Tool::Gh).ok()?;
     lookup_with(&cli, worktree, branch).await
 }
 
 async fn lookup_with(cli: &Path, worktree: &Path, branch: &str) -> Option<PullRequest> {
     // In worktree context, gh resolves the current branch and its GitHub remotes,
     // including fork/upstream relationships. A branch name alone lacks that context.
-    let mut command = tokio::process::Command::new(cli);
+    // Start from the shared runner's command so the Git overrides are removed too.
+    let mut command = tokio::process::Command::from(runner::command(cli));
     command
         .args([
             "pr",
@@ -60,7 +63,6 @@ async fn lookup_with(cli: &Path, worktree: &Path, branch: &str) -> Option<PullRe
         .env("GH_PROMPT_DISABLED", "1")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env_remove("GH_REPO")
-        .stdin(Stdio::null())
         .kill_on_drop(true);
     let output = tokio::time::timeout(Duration::from_secs(8), command.output())
         .await
@@ -70,20 +72,6 @@ async fn lookup_with(cli: &Path, worktree: &Path, branch: &str) -> Option<PullRe
         return None;
     }
     from_response(&output.stdout, branch)
-}
-
-fn find_cli() -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|p| p.join("gh"))
-        .chain(
-            [
-                "/opt/homebrew/bin/gh",
-                "/usr/local/bin/gh",
-                "/opt/local/bin/gh",
-            ]
-            .map(PathBuf::from),
-        )
-        .find(|p| p.is_absolute() && p.is_file())
 }
 
 fn from_response(bytes: &[u8], branch: &str) -> Option<PullRequest> {
@@ -129,15 +117,13 @@ impl PullRequest {
     }
 
     fn browser_command(&self) -> Command {
-        let mut command = Command::new("/usr/bin/open");
+        let mut command = runner::command("/usr/bin/open");
         command.arg(&self.url);
         command
     }
 
     pub fn open(&self) -> Result<(), String> {
-        let output = self
-            .browser_command()
-            .output()
+        let output = runner::run(&mut self.browser_command(), OPEN_TIMEOUT)
             .map_err(|err| format!("Could not open PR #{}: {err}", self.number))?;
         if !output.status.success() {
             return Err(format!(

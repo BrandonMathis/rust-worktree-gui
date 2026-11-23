@@ -46,6 +46,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `terminal.rs` | Wraps the `iced_term` widget (`Console`). |
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
 | `pull_request.rs` | `gh pr view` lookup and validation of the HTTPS PR URL. |
+| `runner.rs` | Every subprocess: tool lookup (`PATH` + Homebrew), removal of the `GIT_*` overrides, per-call timeouts. |
 | `actions.rs` | Open in Finder or VS Code, copy path. |
 | `create.rs`, `quit.rs` | New project and worktree creation flow; quit confirmation. |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |

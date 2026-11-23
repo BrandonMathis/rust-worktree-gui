@@ -1,7 +1,15 @@
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
+
+use crate::runner::{self, Tool};
+
+/// Limit for quick Git queries (`rev-parse`, `worktree list`). A hung Git (for example
+/// on an unreachable network volume) then fails the refresh instead of blocking it.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+/// Limit for commands that write files: `init` and `worktree add` check out a tree.
+const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Checkout {
@@ -76,7 +84,11 @@ pub fn inventory(anchor: &Checkout) -> Result<Vec<Worktree>, String> {
 pub fn new_project(destination: &Path) -> Result<Checkout, String> {
     std::fs::create_dir(destination)
         .map_err(|error| format!("Could not create {}: {error}", destination.display()))?;
-    if let Err(error) = git(destination, &["init", "--quiet"]) {
+    if let Err(error) = git_args_with(
+        destination,
+        &[OsStr::new("init"), OsStr::new("--quiet")],
+        CHECKOUT_TIMEOUT,
+    ) {
         // Never remove files or an existing directory on failure.
         let _ = std::fs::remove_dir(destination);
         return Err(error);
@@ -115,7 +127,7 @@ pub fn add_worktree(
         .map_err(|error| format!("Base ref {base} must point to a commit. For a new repository, make its first commit before adding a worktree. {error}"))?;
     let revision = String::from_utf8_lossy(&revision);
     let revision = revision.trim();
-    git_args(
+    git_args_with(
         source,
         &[
             OsStr::new("-c"),
@@ -128,6 +140,7 @@ pub fn add_worktree(
             destination.as_os_str(),
             OsStr::new(revision),
         ],
+        CHECKOUT_TIMEOUT,
     )?;
     Ok(destination
         .canonicalize()
@@ -140,27 +153,39 @@ fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 }
 
 fn git_args(cwd: &Path, args: &[&OsStr]) -> Result<Vec<u8>, String> {
-    let mut command = Command::new("git");
+    git_args_with(cwd, args, QUERY_TIMEOUT)
+}
+
+fn git_args_with(cwd: &Path, args: &[&OsStr], timeout: Duration) -> Result<Vec<u8>, String> {
+    run_git(&runner::find(Tool::Git)?, cwd, args, timeout)
+}
+
+/// Runs `program` as Git. `runner::command` removes the Git environment overrides,
+/// so if the app is started from a Git hook it still uses the chosen checkout,
+/// not the hook's repository.
+fn run_git(
+    program: &Path,
+    cwd: &Path,
+    args: &[&OsStr],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    let shown = args
+        .iter()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut command = runner::command(program);
     command.arg("-C").arg(cwd).args(args);
-    // If the app is run from a Git hook, use the chosen checkout, not the hook's repository.
-    for key in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_INDEX_FILE",
-    ] {
-        command.env_remove(key);
-    }
-    let output = command
-        .output()
-        .map_err(|err| format!("Could not run Git: {err}"))?;
+    let output = runner::run(&mut command, timeout).map_err(|error| match error {
+        runner::RunError::TimedOut(_) => format!(
+            "git {shown} in {} {error}. Refresh to try again.",
+            cwd.display()
+        ),
+        _ => format!("Could not run Git: {error}"),
+    })?;
     if !output.status.success() {
         return Err(format!(
-            "git {} failed in {} ({}): {}",
-            args.iter()
-                .map(|arg| arg.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" "),
+            "git {shown} failed in {} ({}): {}",
             cwd.display(),
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
@@ -241,6 +266,24 @@ fn parse_worktrees(output: &[u8]) -> Result<Vec<Worktree>, String> {
 mod tests {
     use super::*;
     use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn a_hung_git_fails_with_a_readable_error_instead_of_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = crate::runner::tests::script(dir.path(), "git", "exec /bin/sleep 30");
+        let error = run_git(
+            &git,
+            dir.path(),
+            &[OsStr::new("worktree"), OsStr::new("list")],
+            Duration::from_millis(200),
+        )
+        .unwrap_err();
+        assert!(error.starts_with("git worktree list in "), "{error}");
+        assert!(
+            error.ends_with("did not finish within 200 ms and was stopped. Refresh to try again."),
+            "{error}"
+        );
+    }
 
     #[test]
     fn preserves_paths_and_parses_flags() {

@@ -8,6 +8,7 @@ mod icons;
 mod pull_request;
 mod quit;
 mod row_menu;
+mod runner;
 mod settings;
 mod style;
 mod terminal;
@@ -20,6 +21,9 @@ mod tmux;
 mod git_fixtures;
 
 fn main() -> iced::Result {
+    // SAFETY: this is the first statement in `main`, so no other thread exists yet.
+    // It keeps a hook's `GIT_DIR` (and friends) out of the embedded terminal.
+    unsafe { runner::remove_git_overrides_from_process() };
     let preferences = terminal_config::Preferences::load();
     let font = preferences
         .as_ref()

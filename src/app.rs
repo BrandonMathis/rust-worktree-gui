@@ -2302,6 +2302,23 @@ mod tests {
     }
 
     #[test]
+    fn refresh_is_usable_again_after_git_times_out() {
+        let (_tmp, mut app, _id, _root, _linked) = app_with_linked_checkout();
+        assert_eq!(app.update(Message::Refresh).units(), 1);
+        assert_eq!(
+            app.update(Message::Refresh).units(),
+            0,
+            "already refreshing"
+        );
+        // The shared runner kills a hung git and returns this error.
+        let refresh_id = app.projects[0].refresh_id.unwrap();
+        let timed_out = "git worktree list in /repo did not finish within 30 seconds and was stopped. Refresh to try again.";
+        let _ = app.update(Message::Refreshed(refresh_id, Err(timed_out.into())));
+        assert_eq!(app.projects[0].refresh_id, None);
+        assert_eq!(app.update(Message::Refresh).units(), 1);
+    }
+
+    #[test]
     fn replacing_an_anchor_with_another_repository_is_rejected() {
         let (tmp, mut app, id, root, _linked) = app_with_linked_checkout();
         let other = tmp.path().join("other repo");
