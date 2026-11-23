@@ -216,7 +216,7 @@ impl App {
         }
     }
 
-    pub(super) fn forget(&mut self, id: ProjectId) -> Result<(), String> {
+    pub(super) fn remove_bookmark(&mut self, id: ProjectId) -> Result<(), String> {
         self.save(
             self.projects
                 .iter()

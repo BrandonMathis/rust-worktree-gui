@@ -1,24 +1,5 @@
-use iced::{Task, window};
-use rfd::{AsyncMessageDialog, MessageButtons, MessageDialogResult};
-
-const QUIT: &str = "Quit";
-
-pub fn confirm(id: window::Id) -> Task<bool> {
-    // Construct the alert on the UI thread and attach it to the app window.
-    window::run(id, |parent| {
-        AsyncMessageDialog::new()
-            .set_parent(parent)
-            .set_title("Quit Worktree Browser?")
-            .set_description("Your tmux sessions will keep running.")
-            .set_buttons(MessageButtons::OkCancelCustom(QUIT.into(), "Cancel".into()))
-            .show()
-    })
-    .then(|answer| Task::perform(answer, is_confirmed))
-}
-
-fn is_confirmed(answer: MessageDialogResult) -> bool {
-    matches!(answer, MessageDialogResult::Custom(button) if button == QUIT)
-}
+#[cfg(target_os = "macos")]
+use iced::window;
 
 #[cfg(target_os = "macos")]
 pub fn install_shortcut(parent: &dyn window::Window) {
@@ -54,17 +35,5 @@ pub fn install_shortcut(parent: &dyn window::Window) {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_the_explicit_quit_button_confirms() {
-        assert!(is_confirmed(MessageDialogResult::Custom("Quit".into())));
-        assert!(!is_confirmed(MessageDialogResult::Custom("Cancel".into())));
-        assert!(!is_confirmed(MessageDialogResult::Cancel));
     }
 }

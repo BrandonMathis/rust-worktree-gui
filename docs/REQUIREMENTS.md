@@ -12,7 +12,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 
 **Projects you choose**
 - Add a repository by picking any folder inside it. Picking the same repository twice, from any checkout, doesn't create a duplicate.
-- Bookmarks are remembered between launches. Forgetting a project removes only the bookmark, never files, Git data or running sessions.
+- Bookmarks are remembered between launches. **Remove Project** asks for confirmation before removing the bookmark. Files, Git data, and running sessions are left alone.
 - If the saved folder goes away, the project is shown as unavailable and you can point it at another checkout of the same repository.
 
 **Worktrees straight from Git**
