@@ -3,13 +3,15 @@ use iced::{Element, Subscription, Task};
 use iced_term::settings::{BackendSettings, Settings, ThemeSettings};
 use iced_term::{AlacrittyEvent, BackendCommand, Command, Event, Terminal, TerminalView};
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 
 pub struct Console {
     widget: Terminal,
     /// The worktree whose tmux session the client in this terminal shows.
     worktree: PathBuf,
     exited: bool,
-    status: Option<i32>,
+    /// How the tmux client exited, once alacritty_terminal reports it.
+    status: Option<ExitStatus>,
     scale: f32,
 }
 
@@ -98,9 +100,7 @@ impl Console {
     }
 
     pub fn failure(&self) -> Option<String> {
-        self.status.filter(|&status| status != 0).map(|status| {
-            format!("Terminal client exited with status {status}. Reconnect to try again.")
-        })
+        self.status.and_then(exit_failure)
     }
 
     pub fn update(&mut self, Event::BackendCall(id, cmd): Event) {
@@ -159,9 +159,27 @@ fn path_paste_text(path: &Path) -> String {
     text
 }
 
+/// The notice for a tmux client that exited unsuccessfully, or `None` for a
+/// clean exit (for example, the session's last shell exited).
+fn exit_failure(status: ExitStatus) -> Option<String> {
+    if status.success() {
+        return None;
+    }
+    // `code()` is `None` when a signal ended the client; ExitStatus's
+    // Display then names the signal, e.g. "signal: 9 (SIGKILL)".
+    let reason = match status.code() {
+        Some(code) => format!("exited with status {code}"),
+        None => format!("was stopped ({status})"),
+    };
+    Some(format!("Terminal client {reason}. Reconnect to try again."))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `from_raw` builds an ExitStatus from a raw wait(2) status word: the exit
+    // code sits in the second byte, a terminating signal in the low bits.
+    use std::os::unix::process::ExitStatusExt;
 
     #[test]
     fn dropped_paths_are_separated_and_quoted_for_the_shell() {
@@ -173,6 +191,19 @@ mod tests {
         assert_eq!(
             text,
             "/tmp/diagram.png '/tmp/plan d'\\''été; $(whoami).jpg' "
+        );
+    }
+
+    #[test]
+    fn a_clean_client_exit_is_not_reported_as_a_failure() {
+        assert_eq!(exit_failure(ExitStatus::from_raw(0)), None);
+    }
+
+    #[test]
+    fn a_failed_client_exit_reports_its_exit_code() {
+        assert_eq!(
+            exit_failure(ExitStatus::from_raw(1 << 8)).as_deref(),
+            Some("Terminal client exited with status 1. Reconnect to try again.")
         );
     }
 
@@ -189,5 +220,12 @@ mod tests {
 
         let path = Path::new(OsStr::from_bytes(b"/tmp/a\xff7.png"));
         assert_eq!(path_paste_text(path), "$'/tmp/a\\3777.png' ");
+    }
+
+    #[test]
+    fn a_client_killed_by_a_signal_reports_the_signal() {
+        let message = exit_failure(ExitStatus::from_raw(9)).unwrap_or_default();
+        assert!(message.starts_with("Terminal client was stopped (signal: 9"));
+        assert!(message.ends_with("Reconnect to try again."));
     }
 }
