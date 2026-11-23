@@ -1,93 +1,63 @@
-//! PR badges: `gh pr view` lookups per worktree, and the header badge.
+//! PR badges: one `gh pr list` per project, matched to worktrees by branch
+//! (`pull_request::Badges`), and the header badge.
 
 use super::{App, Message, ProjectId, background};
 use crate::icons;
 use crate::pull_request::{self, PullRequest};
 use crate::style::{self, Button, Panel};
 use crate::theme::Palette;
-use iced::futures::{StreamExt, stream};
 use iced::widget::{button, container, row, text, tooltip};
 use iced::{Center, Element, Task};
-use std::path::{Path, PathBuf};
 
-/// Which worktrees of a project to look up.
-#[derive(Clone, Copy)]
-pub(super) enum Lookup<'a> {
-    /// Every worktree with a branch (manual Refresh).
+/// When a project's PRs should be listed again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Lookup {
+    /// Always (manual Refresh, selecting another worktree).
     All,
-    /// Only worktrees with no answer or lookup yet (automatic refresh), so
-    /// `gh` doesn't run again for worktrees whose branch didn't change.
+    /// Only if a worktree is new or changed branch since the last answer
+    /// (automatic refresh), so `gh` doesn't run when nothing changed.
     New,
-    /// The one worktree at this path (selecting it).
-    Worktree(&'a Path),
-}
-
-/// The PR lookup state of one worktree. `request_id` is set while a lookup
-/// is in flight, so a late answer to an older lookup is ignored.
-#[derive(Default)]
-pub(super) struct PullRequestCheck {
-    pub(super) request_id: Option<u64>,
-    pub(super) pr: Option<PullRequest>,
 }
 
 impl App {
-    /// Starts a lookup for each worktree of project `id` chosen by `scope`
-    /// that has a branch and no lookup in flight. At most four `gh` processes
-    /// run at once.
+    /// Starts one `gh pr list` for project `id`, unless one is already running:
+    /// its answer is matched against the worktrees listed when it arrives, so it
+    /// is still good for a newer inventory.
     pub(super) fn lookup_pull_requests(&mut self, id: ProjectId, scope: Lookup) -> Task<Message> {
         let Some(project) = self.projects.iter_mut().find(|project| project.id == id) else {
             return Task::none();
         };
-        let targets: Vec<_> = project
-            .worktrees()
-            .iter()
-            .filter(|tree| {
-                let in_scope = match scope {
-                    Lookup::Worktree(path) => tree.path == path,
-                    Lookup::New => !project.pull_requests.contains_key(&tree.path),
-                    Lookup::All => true,
-                };
-                in_scope && tree.unavailable_reason().is_none() && !tree.detached
-            })
-            .filter_map(|tree| Some((tree.path.clone(), tree.branch.clone()?)))
-            .collect();
-        let mut requests = Vec::new();
-        for (path, branch) in targets {
-            let check = project.pull_requests.entry(path.clone()).or_default();
-            if check.request_id.is_none() {
-                self.pr_request_id += 1;
-                check.request_id = Some(self.pr_request_id);
-                requests.push((path, branch, self.pr_request_id));
-            }
-        }
-        if requests.is_empty() {
+        let worktrees = project.inventory.as_deref().unwrap_or_default();
+        let wanted = match scope {
+            Lookup::All => worktrees
+                .iter()
+                .any(|tree| pull_request::branch_to_match(tree).is_some()),
+            Lookup::New => project.pull_requests.needs_lookup(worktrees),
+        };
+        if !wanted || project.pull_requests.in_flight() {
             return Task::none();
         }
-        // `Task::stream` turns an async stream into messages as items arrive;
-        // `buffer_unordered(4)` runs up to four lookups concurrently.
-        Task::stream(
-            stream::iter(requests)
-                .map(move |(path, branch, request)| async move {
-                    let pr = pull_request::lookup(&path, &branch).await;
-                    Message::PullRequestFound(id, path, request, pr)
-                })
-                .buffer_unordered(4),
+        self.pr_request_id += 1;
+        let request = self.pr_request_id;
+        project.pull_requests.start(request);
+        let checkout = project.checkout.root.clone();
+        background(
+            move || Ok(pull_request::list(&checkout)),
+            // A failed background task counts as "no answer" and hides the badges.
+            move |prs| Message::PullRequestsListed(id, request, prs.ok().flatten()),
         )
     }
 
-    pub(super) fn pull_request_found(
+    pub(super) fn pull_requests_listed(
         &mut self,
         id: ProjectId,
-        path: PathBuf,
         request: u64,
-        pr: Option<PullRequest>,
+        prs: Option<Vec<PullRequest>>,
     ) {
-        if let Some(project) = self.projects.iter_mut().find(|p| p.id == id)
-            && let Some(check) = project.pull_requests.get_mut(&path)
-            && check.request_id == Some(request)
-        {
-            check.request_id = None;
-            check.pr = pr;
+        if let Some(project) = self.projects.iter_mut().find(|p| p.id == id) {
+            // `finish` ignores an answer to an older or cancelled lookup.
+            let worktrees = project.inventory.as_deref().unwrap_or_default();
+            project.pull_requests.finish(request, prs, worktrees);
         }
     }
 

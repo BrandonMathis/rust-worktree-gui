@@ -35,7 +35,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - **Rename Worktree** gives a worktree a short display name. It doesn't affect Git, the folder or the tmux session. Clear the name to show the branch again.
 
 **Pull requests**
-- If the selected worktree's branch has an **open** GitHub pull request, a **PR #N** button appears in the header. Clicking it opens the PR in your browser. This uses your existing `gh` login, and the button stays hidden if anything goes wrong.
+- If the selected worktree's branch has a GitHub pull request (open first, otherwise the newest), a **PR #N** button with its state appears in the header. Clicking it opens the PR in your browser. This uses your existing `gh` login, and the button stays hidden if anything goes wrong.
 
 **Look and layout**
 - Dark Dracula theme by default, 3-pixel rounded corners, translucent "glass" panels with macOS blur.
@@ -43,7 +43,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - The sidebar can be hidden for a full-width terminal. While it's hidden, hovering the toggle shows the sidebar as a temporary overlay.
 
 **Settings and theme**
-- A gear at the bottom left of the sidebar opens a full-window Settings screen. Its first page, **Theme**, edits the app's eleven Dracula palette colors with a color wheel, a brightness slider and hex fields, and previews every change live.
+- A gear at the bottom left of the sidebar opens a full-window Settings screen, and stays there so a second click closes it. Its first page, **Theme**, edits the app's eleven Dracula palette colors with a color wheel, a brightness slider and hex fields, and previews every change live.
 - A preset menu offers Dracula, Alucard (light) and the Dracula Pro family (Pro, Blade, Buffy, Lincoln, Morbius, Van Helsing).
 - **Save & Confirm** keeps the theme across launches; **Cancel** or Escape discards the changes. The terminal keeps your Alacritty colors.
 

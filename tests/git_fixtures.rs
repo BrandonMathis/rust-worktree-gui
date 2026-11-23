@@ -145,3 +145,57 @@ fn a_folder_outside_git_is_a_readable_error() {
         "{error}"
     );
 }
+
+#[test]
+fn projects_are_named_after_the_repository_not_the_anchor_checkout() {
+    use std::ffi::OsStr;
+    let (tmp, root) = fixture();
+    run_git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-qb",
+            "feature-x",
+            "../feature-x checkout",
+        ],
+    );
+    let main = git::discover(&root).unwrap();
+    let linked = git::discover(&root.with_file_name("feature-x checkout")).unwrap();
+    assert_eq!(main.repository_name(), OsStr::new("main checkout\n"));
+    assert_eq!(linked.repository_name(), OsStr::new("main checkout\n"));
+
+    // A bare repository: `shared repo.git` is named without its `.git` suffix.
+    let parent = tmp.path().canonicalize().unwrap();
+    let bare = parent.join("shared repo.git");
+    run_git(
+        &parent,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            "main checkout\n",
+            "shared repo.git",
+        ],
+    );
+    run_git(
+        &bare,
+        &["worktree", "add", "-q", "../bare checkout", "main"],
+    );
+    let checkout = git::discover(&parent.join("bare checkout")).unwrap();
+    assert_eq!(checkout.repository_name(), OsStr::new("shared repo"));
+
+    // A bare repository hidden inside its project folder is named after the folder.
+    let project = parent.join("my project");
+    std::fs::create_dir(&project).unwrap();
+    run_git(
+        &project,
+        &["clone", "-q", "--bare", "../main checkout\n", ".bare"],
+    );
+    run_git(
+        &project.join(".bare"),
+        &["worktree", "add", "-q", "../main", "main"],
+    );
+    let checkout = git::discover(&project.join("main")).unwrap();
+    assert_eq!(checkout.repository_name(), OsStr::new("my project"));
+}
