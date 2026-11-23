@@ -10,21 +10,21 @@ Rust 1.90.0 is pinned in `.tool-versions` (asdf). Always pass `--locked`.
 
 ```sh
 cargo run --locked                                   # launch the app (needs tmux)
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked                                  # all tests; add a name to filter
+cargo test --locked                                  # all tests, incl. vendor/iced_term; add a name to filter
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
 cargo deny check                                     # advisories, licenses, sources (deny.toml)
-cargo llvm-cov --locked                              # coverage; CI enforces a line-coverage floor
+cargo llvm-cov --locked --ignore-filename-regex vendor/  # app coverage; CI enforces a line-coverage floor
 ruby scripts/dependency_health.rb                    # out-of-date / out-of-support report (network)
 ruby scripts/test/dependency_health_test.rb          # tests for that report
 ```
 
-Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
+`vendor/iced_term` is a workspace member and a default member, so `cargo test`, `cargo clippy` and `cargo llvm-cov` run its tests and lints too; `cargo fmt` needs `--all` to include it. Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
 
 ## Requirements are the spec
 
-- `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary. `docs/CODE_REVIEW.md` lists known issues and planned refactors.
+- `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary.
 - When you add or change behavior, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
 - Don't keep requirement counts or totals in `docs/frd/README.md` or `docs/REQUIREMENTS.md`. Every feature would edit the same lines and cause merge conflicts.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
@@ -37,23 +37,34 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | Module | Responsibility |
 | --- | --- |
 | `main.rs` | Window setup, theme, font. Includes `tests/git_fixtures.rs` as a test module. |
-| `app.rs` | All state, messages, update and view. Large; see the split proposed in `docs/CODE_REVIEW.md`. |
+| `app/mod.rs` | App state (`App`, `Project`, `Selection`), `Message`, construction, subscriptions, `on_selection_changed()`, `background(...)`. |
+| `app/update.rs` | `App::update`: one arm per message, each calling a named handler. Small handlers (quit, picker, menus, rename, Settings). |
+| `app/projects.rs` | Bookmarks, refresh from Git (keeps the last good inventory on error), selection reconcile, forget, display names. |
+| `app/pull_requests.rs` | PR lookups per worktree and the header badge. |
+| `app/sessions.rs` | tmux session badges (live, new output, bell) from a background `list-windows -a` poll. |
+| `app/auto_refresh.rs`, `watch.rs` | Automatic refresh on window focus and when a repository's Git metadata fingerprint changes (polled with `stat`). |
+| `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, switching the running client to another worktree (`switch-client`, with a full-connect fallback), and the header status and pane. |
+| `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
+| `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |
+| `app/tests.rs` | State-machine tests driven through `App::update`. |
 | `git.rs` | `discover` (resolve the checkout and its common dir) and `inventory` (`git worktree list --porcelain -z` parser). |
 | `config.rs` | Bookmark store in `~/Library/Application Support/Worktree Browser/projects.json`, and the shared atomic JSON write. |
 | `theme.rs` | The palette (eleven Dracula colors), presets, hex/HSV conversion, and the saved `theme.json`. |
 | `settings.rs`, `color_wheel.rs` | Full-window Settings modal (a nested Elm component returning an `Outcome`); canvas hue/saturation wheel. |
-| `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup. |
-| `terminal.rs` | Wraps the `iced_term` widget (`Console`). |
+| `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup, read-only session activity. |
+| `terminal.rs` | Wraps the `iced_term` widget (`Console`): the worktree it shows and its tmux client's pid. |
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
-| `pull_request.rs` | `gh pr view` lookup and validation of the HTTPS PR URL. |
+| `pull_request.rs` | One `gh pr list` per project, matching PRs to worktrees by branch, validation of the HTTPS PR URL, and the per-project `Badges`. |
+| `runner.rs` | Every subprocess: tool lookup (`PATH` + Homebrew), removal of the `GIT_*` overrides, per-call timeouts. |
 | `actions.rs` | Open in Finder or VS Code, copy path. |
-| `create.rs`, `quit.rs` | New project and worktree creation flow; quit confirmation. |
+| `create.rs`, `quit.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`; quit confirmation. |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
 
 `vendor/iced_term` is a patched copy of `iced_term` 0.8.0 (via `[patch.crates-io]`). It adds things such as an explicit `cell_size` so the grid matches Alacritty's metrics. Keep patches minimal, and note why in the code you touch there.
 
 ## Rules
 
+- **Never commit code review documents.** Review findings, audits and refactor wish lists (for example a `CODE_REVIEW.md`) must not be checked into source control. Keep them out of the repository (in the PR, an issue, or an untracked local file) and record the outcome as FRD rows and tests instead.
 - **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names and the theme palette are the only persisted state.
 - **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Forgetting a project removes only the bookmark.
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; paths may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.

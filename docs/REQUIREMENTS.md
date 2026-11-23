@@ -16,7 +16,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - If the saved folder goes away, the project is shown as unavailable and you can point it at another checkout of the same repository.
 
 **Worktrees straight from Git**
-- The list of worktrees comes from Git alone. Worktrees created or deleted elsewhere appear or disappear when you click Refresh.
+- The list of worktrees comes from Git alone. Worktrees created, deleted or switched elsewhere, including from the embedded terminal, appear or disappear on their own within a few seconds, and whenever the window gains focus. Refresh also re-checks pull requests.
 - Each worktree shows its branch (or "Detached HEAD"). Missing or prunable worktrees are flagged and can't open a terminal.
 - The app never creates, removes or prunes worktrees.
 
@@ -35,7 +35,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - **Rename Worktree** gives a worktree a short display name. It doesn't affect Git, the folder or the tmux session. Clear the name to show the branch again.
 
 **Pull requests**
-- If the selected worktree's branch has an **open** GitHub pull request, a **PR #N** button appears in the header. Clicking it opens the PR in your browser. This uses your existing `gh` login, and the button stays hidden if anything goes wrong.
+- If the selected worktree's branch has a GitHub pull request (open first, otherwise the newest), a **PR #N** button with its state appears in the header. Clicking it opens the PR in your browser. This uses your existing `gh` login, and the button stays hidden if anything goes wrong.
 
 **Look and layout**
 - Dark Dracula theme by default, 3-pixel rounded corners, translucent "glass" panels with macOS blur. Panels in the window's bottom corners follow the macOS window's own corner curve.
@@ -43,7 +43,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - The sidebar can be hidden for a full-width terminal. While it's hidden, hovering the toggle shows the sidebar as a temporary overlay.
 
 **Settings and theme**
-- A gear at the bottom left of the sidebar opens a full-window Settings screen. Its first page, **Theme**, edits the app's eleven Dracula palette colors with a color wheel, a brightness slider and hex fields, and previews every change live.
+- A gear at the bottom left of the sidebar opens a full-window Settings screen, and stays there so a second click closes it. Its first page, **Theme**, edits the app's eleven Dracula palette colors with a color wheel, a brightness slider and hex fields, and previews every change live.
 - A preset menu offers Dracula, Alucard (light) and the Dracula Pro family (Pro, Blade, Buffy, Lincoln, Morbius, Van Helsing).
 - **Save & Confirm** keeps the theme across launches; **Cancel** or Escape discards the changes. The terminal keeps your Alacritty colors.
 
@@ -51,7 +51,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 
 - Creating worktrees from the app.
 - Automatically starting a coding agent (you start it in the shell).
-- Packaging as a `.app`, automatic refresh or file watching, and sessions that survive a reboot.
+- Packaging as a `.app`, and sessions that survive a reboot.
 
 ## Requirements and verification
 
