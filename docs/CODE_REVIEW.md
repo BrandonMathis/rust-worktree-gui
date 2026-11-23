@@ -10,8 +10,8 @@ There are no Critical or High findings. Security is sound: subprocesses use argu
 
 | # | Where | Problem | Fix |
 | --- | --- | --- | --- |
-| M1 | `app.rs` `Message::Refreshed` | A failed refresh (git error, anchor gone) stores `Err`, so `worktrees()` returns nothing. The selected worktree is then treated as deleted: the selection jumps to Overview and the terminal detaches, even though the worktree still exists. Violates WT-06. | Keep the last good inventory. Reconcile the selection only on `Ok`. Add a test. |
-| M2 | `app.rs` `Message::ToggleProject` | Expanding another project in the sidebar selects it, which detaches the current terminal and clears the PR badge. Browsing the sidebar loses your view. | Expanding changes only `expanded`. Change the selection through Overview or a worktree click. |
+| M1 | `app.rs` `Message::Refreshed` | A failed refresh (git error, anchor gone) stores `Err`, so `worktrees()` returns nothing. The selected worktree is then treated as deleted: the selection jumps to Overview and the terminal detaches, even though the worktree still exists. Violates WT-06. | Keep the last good inventory. Reconcile the selection only on `Ok`. Add a test. **Done:** `failed_refresh_keeps_the_selection_terminal_and_pr_badges`. |
+| M2 | `app.rs` `Message::ToggleProject` | Expanding another project in the sidebar selects it, which detaches the current terminal and clears the PR badge. Browsing the sidebar loses your view. | Expanding changes only `expanded`. Change the selection through Overview or a worktree click. **Done:** `expanding_another_project_keeps_the_selected_worktree_terminal_and_pr` (UI-12). |
 | M3 | `app.rs` `Project::name` | The project label is the anchor folder's name. After adding from a linked checkout, or after **Replace Anchor**, the project is labeled with that worktree's folder (for example `feature-x`). | Derive the name from `common_dir` (the parent of `.git`), or store a display name. |
 
 ### Low
@@ -43,9 +43,9 @@ A `sample` profile of the debug build while typing showed the main thread about 
 
 | # | Size | Change |
 | --- | --- | --- |
-| R1 | L | Split `app.rs` (about 1,800 lines) into `app/{state,update,tests}.rs` and `app/view/{sidebar,header,overview}.rs`. Break the 30-arm `update` match into named handlers. |
+| R1 | L | Split `app.rs` (about 1,800 lines) into `app/{state,update,tests}.rs` and `app/view/{sidebar,header,overview}.rs`. Break the 30-arm `update` match into named handlers. **Done:** `src/app/` is split into `mod` (state), `update` (named handlers), `projects`, `pull_requests`, `terminal_pane`, `creation`, `sidebar`, `view`, `widgets` and `tests`. The creation form is a nested component (`create::Message`/`Outcome`). |
 | R2 | M | Group related state: `TerminalPane { state, next_id, scale, prefs }`, `PrBadge { request_id, pr }`, and an id generator for the counters. |
-| R3 | S | One `on_selection_changed()` that detaches the terminal, clears the PR and cancels the rename draft. Today this logic is repeated in `select`, `Refreshed` and `forget`, which clears the draft twice. |
+| R3 | S | One `on_selection_changed()` that detaches the terminal, clears the PR and cancels the rename draft. Today this logic is repeated in `select`, `Refreshed` and `forget`, which clears the draft twice. **Done:** `App::on_selection_changed()`. The header PR badge is derived from the selection, so it needs no reset. |
 | R4 | M | Typed errors (`GitError`, `TmuxError`, `StoreError`) instead of `String`, rendered to user text in one place. Tests then match variants instead of `contains`. |
 | R5 | M | A `Runner` abstraction for subprocesses, owning tool lookup, environment cleanup and timeouts. Fixes L1 and L7 together and makes tmux, `gh` and `open` testable without shell-script fakes. |
 | R6 | S | Move `tests/git_fixtures.rs` to `src/test_support.rs` and drop `autotests = false` and the `#[path]` include. It isn't an integration test. |

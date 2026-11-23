@@ -2,9 +2,12 @@ use crate::terminal_config::Preferences;
 use iced::{Element, Subscription, Task};
 use iced_term::settings::{BackendSettings, Settings, ThemeSettings};
 use iced_term::{AlacrittyEvent, BackendCommand, Command, Event, Terminal, TerminalView};
+use std::path::{Path, PathBuf};
 
 pub struct Console {
     widget: Terminal,
+    /// The worktree whose tmux session the client in this terminal shows.
+    worktree: PathBuf,
     exited: bool,
     status: Option<i32>,
     scale: f32,
@@ -13,6 +16,7 @@ pub struct Console {
 impl Console {
     pub fn open(
         id: u64,
+        worktree: PathBuf,
         backend: BackendSettings,
         preferences: &Preferences,
         scale: f32,
@@ -31,10 +35,31 @@ impl Console {
         }
         Ok(Self {
             widget,
+            worktree,
             exited: false,
             status: None,
             scale,
         })
+    }
+
+    pub fn worktree(&self) -> &Path {
+        &self.worktree
+    }
+
+    /// Records that the tmux client now shows `worktree`'s session.
+    pub fn switched_to(&mut self, worktree: PathBuf) {
+        self.worktree = worktree;
+    }
+
+    /// The process id of the tmux client running in this terminal.
+    pub fn client_pid(&self) -> u32 {
+        self.widget.child_pid()
+    }
+
+    /// Identifies this terminal instance; a reconnect creates a new id.
+    #[cfg(test)]
+    pub fn id(&self) -> u64 {
+        self.widget.id
     }
 
     pub fn rescale(&mut self, preferences: &Preferences, scale: f32) {

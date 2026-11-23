@@ -70,6 +70,12 @@ impl Terminal {
         &self.widget_id
     }
 
+    /// Patch: the process id of the program running in the PTY.
+    #[cfg(unix)]
+    pub fn child_pid(&self) -> u32 {
+        self.backend.child_pid
+    }
+
     pub fn subscription(&self) -> Subscription<Event> {
         let data = TerminalSubscriptionData {
             id: self.id,
