@@ -2,7 +2,7 @@
 
 A macOS workspace for Git worktrees. Click a checkout in the sidebar to open or resume its tmux session in an embedded terminal. The terminal uses Alacritty’s Rust engine via `iced_term`; it does not require the Alacritty app or open a separate window.
 
-![Worktree Browser with a storefront project expanded in the sidebar, worktrees marked by pull request state, and the Checkout redesign worktree's tmux session open in the embedded terminal](docs/images/screenshot.png)
+![Worktree Browser with storefront and design-tokens projects in the sidebar, worktrees marked by pull request state, and the Checkout redesign worktree's tmux session split between Neovim, Pi and Claude Code](docs/images/screenshot.png)
 
 ## Run
 
