@@ -18,6 +18,7 @@ cargo deny check                                     # advisories, licenses, sou
 cargo llvm-cov --locked --ignore-filename-regex vendor/  # app coverage; CI enforces a line-coverage floor
 ruby scripts/dependency_health.rb                    # out-of-date / out-of-support report (network)
 ruby scripts/test/dependency_health_test.rb          # tests for that report
+ruby script/capture/test/states_test.rb              # tests for which screenshot states a PR gets
 ```
 
 `vendor/iced_term` is a workspace member and a default member, so `cargo test`, `cargo clippy` and `cargo llvm-cov` run its tests and lints too; `cargo fmt` needs `--all` to include it. Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
@@ -32,13 +33,13 @@ ruby scripts/test/dependency_health_test.rb          # tests for that report
 
 ## Screenshots
 
-`.github/workflows/screenshots.yml` posts screenshots of three app states on PRs that touch UI files. It builds with `--features capture` (startup hooks in `src/capture.rs`, off in normal builds) and runs `script/capture/capture.rb`, which creates fixture repos, a private tmux server with vim and shell splits, and an isolated `HOME`. It never touches your bookmarks, tmux sessions or dotfiles. Run it locally to check a visual change (a window appears briefly; your terminal needs Screen Recording permission):
+`.github/workflows/screenshots.yml` posts screenshots on PRs that change how the app looks, of only the states that show the files the PR changes. Dependency updates (`Cargo.toml`, `Cargo.lock`) and changes no state shows get none. It builds with `--features capture` (startup hooks in `src/capture.rs`, off in normal builds) and runs `script/capture/capture.rb`, which creates fixture repos, a private tmux server with vim and shell splits, and an isolated `HOME`. It never touches your bookmarks, tmux sessions or dotfiles. Run it locally to check a visual change (a window appears briefly; your terminal needs Screen Recording permission):
 
 ```sh
 cargo build --locked --features capture && ruby script/capture/capture.rb   # PNGs in target/screenshots
 ```
 
-When a UI change adds or moves a key state, update the `states` list in `capture.rb`.
+The states live in `script/capture/states.rb`. Each lists the files it shows (`covers`), and a PR gets screenshots of the states whose `covers` match a file it changes (`script/capture/select.rb`; tests in `script/capture/test/states_test.rb`). So the screenshots show the feature a PR adds or changes: when you add a UI feature that no state shows, add a state for it in the same PR, with `covers` naming the feature's files. If the app needs a new startup hook to reach that view, add a variant to `WORKTREE_BROWSER_CAPTURE_OPEN` in `src/capture.rs`. Capture one or more states locally with `--only 04-settings,01-workspace`.
 
 ## Architecture
 

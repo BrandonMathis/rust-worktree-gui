@@ -1,7 +1,11 @@
-# Screenshots of the app for pull requests that touch the UI. Builds the app
-# with `--features capture`, runs script/capture/capture.rb (fixture repos plus
-# a private tmux server with vim and shell splits), and posts the PNGs in one
-# PR comment that is updated on each push.
+# Screenshots of the app for pull requests that change how it looks. A cheap
+# Linux job first picks the states that show the files the PR changes
+# (script/capture/states.rb, via select.rb), so reviewers see the feature being
+# added or modified, and a PR that changes nothing a state shows (such as a
+# dependency update) starts no macOS runner at all. The macOS job builds the app
+# with `--features capture` and runs script/capture/capture.rb for those states
+# (fixture repos plus a private tmux server with vim and shell splits); the PNGs
+# are posted in one PR comment that is updated on each push.
 #
 # The PNGs are committed to the `pr-screenshots` branch so the comment can show
 # them inline (GitHub has no API for uploading comment images). They are also
@@ -11,25 +15,13 @@ name: Screenshots
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    # Files that can change what the app looks like.
+    # A coarse filter; the plan job decides which states, if any, to capture.
+    # Cargo.toml and Cargo.lock are left out: a dependency update is not a UI
+    # change, so release and Dependabot PRs get no screenshots.
     paths:
-      - src/app/**
-      - src/capture.rs
-      - src/color_wheel.rs
-      - src/create.rs
-      - src/icons.rs
-      - src/main.rs
-      - src/quit.rs
-      - src/row_menu.rs
-      - src/settings.rs
-      - src/style.rs
-      - src/terminal.rs
-      - src/terminal_config.rs
-      - src/theme.rs
-      - vendor/iced_term/**
+      - src/**
+      - vendor/iced_term/src/**
       - assets/**
-      - Cargo.toml
-      - Cargo.lock
       - script/capture/**
       - .github/workflows/screenshots.yml
   workflow_dispatch:
@@ -38,8 +30,7 @@ concurrency:
   group: screenshots-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,10 +39,43 @@ env:
   SCREENSHOT_BRANCH: pr-screenshots
 
 jobs:
+  plan:
+    name: Choose states
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      states: ${{ steps.select.outputs.states }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A PR checks out its merge commit; depth 2 adds the base (its first
+          # parent), so the diff below is exactly what the PR changes.
+          fetch-depth: 2
+      - name: Test the state selection
+        run: ruby script/capture/test/states_test.rb
+      - name: Select the states that show this PR's changes
+        id: select
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            states=$(git diff --name-only -z HEAD^1 HEAD |
+              ruby script/capture/select.rb --summary "$GITHUB_STEP_SUMMARY")
+          else
+            states=$(ruby script/capture/select.rb --all --summary "$GITHUB_STEP_SUMMARY")
+          fi
+          echo "states=$states" >> "$GITHUB_OUTPUT"
+
   capture:
     name: Capture
+    needs: plan
+    if: needs.plan.outputs.states != ''
     runs-on: macos-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,7 +89,9 @@ jobs:
       - run: brew install tmux
       - run: cargo build --locked --features capture
       - name: Capture screenshots
-        run: ruby script/capture/capture.rb --out screenshots
+        env:
+          STATES: ${{ needs.plan.outputs.states }}
+        run: ruby script/capture/capture.rb --out screenshots --only "$STATES"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
