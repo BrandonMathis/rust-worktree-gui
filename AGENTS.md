@@ -37,7 +37,14 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | Module | Responsibility |
 | --- | --- |
 | `main.rs` | Window setup, theme, font. Includes `tests/git_fixtures.rs` as a test module. |
-| `app.rs` | All state, messages, update and view. Large; see the split proposed in `docs/CODE_REVIEW.md`. |
+| `app/mod.rs` | App state (`App`, `Project`, `Selection`), `Message`, construction, subscriptions, `on_selection_changed()`, `background(...)`. |
+| `app/update.rs` | `App::update`: one arm per message, each calling a named handler. Small handlers (quit, picker, menus, rename, Settings). |
+| `app/projects.rs` | Bookmarks, refresh from Git (keeps the last good inventory on error), selection reconcile, forget, display names. |
+| `app/pull_requests.rs` | PR lookups per worktree and the header badge. |
+| `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, focus, and the header status and pane for a worktree. |
+| `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
+| `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |
+| `app/tests.rs` | State-machine tests driven through `App::update`. |
 | `git.rs` | `discover` (resolve the checkout and its common dir) and `inventory` (`git worktree list --porcelain -z` parser). |
 | `config.rs` | Bookmark store in `~/Library/Application Support/Worktree Browser/projects.json`, and the shared atomic JSON write. |
 | `theme.rs` | The palette (eleven Dracula colors), presets, hex/HSV conversion, and the saved `theme.json`. |
@@ -47,7 +54,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
 | `pull_request.rs` | `gh pr view` lookup and validation of the HTTPS PR URL. |
 | `actions.rs` | Open in Finder or VS Code, copy path. |
-| `create.rs`, `quit.rs` | New project and worktree creation flow; quit confirmation. |
+| `create.rs`, `quit.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`; quit confirmation. |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
 
 `vendor/iced_term` is a patched copy of `iced_term` 0.8.0 (via `[patch.crates-io]`). It adds things such as an explicit `cell_size` so the grid matches Alacritty's metrics. Keep patches minimal, and note why in the code you touch there.

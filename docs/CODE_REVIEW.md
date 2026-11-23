@@ -43,9 +43,9 @@ A `sample` profile of the debug build while typing showed the main thread about 
 
 | # | Size | Change |
 | --- | --- | --- |
-| R1 | L | Split `app.rs` (about 1,800 lines) into `app/{state,update,tests}.rs` and `app/view/{sidebar,header,overview}.rs`. Break the 30-arm `update` match into named handlers. |
+| R1 | L | Split `app.rs` (about 1,800 lines) into `app/{state,update,tests}.rs` and `app/view/{sidebar,header,overview}.rs`. Break the 30-arm `update` match into named handlers. **Done:** `src/app/` is split into `mod` (state), `update` (named handlers), `projects`, `pull_requests`, `terminal_pane`, `creation`, `sidebar`, `view`, `widgets` and `tests`. The creation form is a nested component (`create::Message`/`Outcome`). |
 | R2 | M | Group related state: `TerminalPane { state, next_id, scale, prefs }`, `PrBadge { request_id, pr }`, and an id generator for the counters. |
-| R3 | S | One `on_selection_changed()` that detaches the terminal, clears the PR and cancels the rename draft. Today this logic is repeated in `select`, `Refreshed` and `forget`, which clears the draft twice. |
+| R3 | S | One `on_selection_changed()` that detaches the terminal, clears the PR and cancels the rename draft. Today this logic is repeated in `select`, `Refreshed` and `forget`, which clears the draft twice. **Done:** `App::on_selection_changed()`. The header PR badge is derived from the selection, so it needs no reset. |
 | R4 | M | Typed errors (`GitError`, `TmuxError`, `StoreError`) instead of `String`, rendered to user text in one place. Tests then match variants instead of `contains`. |
 | R5 | M | A `Runner` abstraction for subprocesses, owning tool lookup, environment cleanup and timeouts. Fixes L1 and L7 together and makes tmux, `gh` and `open` testable without shell-script fakes. |
 | R6 | S | Move `tests/git_fixtures.rs` to `src/test_support.rs` and drop `autotests = false` and the `#[path]` include. It isn't an integration test. |
