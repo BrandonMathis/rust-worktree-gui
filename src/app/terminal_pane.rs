@@ -226,7 +226,7 @@ impl App {
         // File drops arrive as window events. Send only to a settled attachment,
         // never to a hidden terminal or a client that might still be switching.
         if !self.picking
-            && !self.quit_pending
+            && self.pending_confirmation.is_none()
             && self.settings.is_none()
             && self.creation.is_none()
             && self.worktree_name_draft.is_none()
