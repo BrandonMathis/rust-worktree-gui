@@ -72,6 +72,12 @@ impl App {
         }) {
             Ok(console) => {
                 self.console = ConsoleState::Attached(Box::new(console));
+                if let Some((project, selection)) = self.selected()
+                    && let Some(path) = selection.worktree.clone()
+                {
+                    let id = project.id;
+                    self.mark_session_seen(id, &path);
+                }
                 self.focus_terminal()
             }
             Err(error) => {
@@ -83,6 +89,7 @@ impl App {
 
     /// Drops the terminal view. The tmux session (and its shell) keeps running.
     pub(super) fn detach(&mut self) {
+        self.leave_session();
         self.console = ConsoleState::Detached;
     }
 

@@ -83,3 +83,18 @@ icon!(
     palette,
     r#"<path d="M10 3a7 7 0 1 0 0 14c1.2 0 1.6-.9 1.2-1.8-.5-1 .1-2.2 1.3-2.2H15a2.5 2.5 0 0 0 2.5-2.5C17.5 6.3 14.2 3 10 3z"/><circle cx="6.5" cy="9" r=".8"/><circle cx="9" cy="6.3" r=".8"/><circle cx="12.6" cy="6.8" r=".8"/>"#
 );
+
+// tmux session badges on the right of a sidebar worktree row. The SVG `fill`
+// is tinted by the style color like the strokes, so a filled dot stays a dot.
+// A live session with nothing new: a small ring.
+icon!(session_live, r#"<circle cx="10" cy="10" r="3"/>"#);
+// New output since the user last looked: a filled dot.
+icon!(
+    session_activity,
+    r#"<circle cx="10" cy="10" r="3.5" fill="white"/>"#
+);
+// A bell rang (for example, an agent finished or is waiting for input).
+icon!(
+    bell,
+    r#"<path d="M6 13.5V9a4 4 0 0 1 8 0v4.5l1.5 1.5h-11zM8.5 17h3"/>"#
+);

@@ -266,12 +266,17 @@ impl App {
                 let active =
                     selection.and_then(|s| s.worktree.as_deref()) == Some(tree.path.as_path());
                 let pr = project.pull_request(&tree.path);
-                let label = row![
+                let session = project.session_badge(&tree.path);
+                let mut label = row![
                     project.worktree_icon(tree).view(13, p),
                     single_line(project.worktree_name(tree), 12),
                 ]
                 .spacing(5)
                 .align_y(Center);
+                // The session badge sits on the right, so the left keeps exactly one icon.
+                if let Some(badge) = session {
+                    label = label.push(badge.view(11, p));
+                }
                 let mut details = column![
                     text(project.worktree_name(tree)).size(12),
                     text(format!("{}  ·  {}", tree.label(), tree.path.display()))
@@ -281,6 +286,9 @@ impl App {
                 .spacing(3);
                 if let Some(pr) = pr {
                     details = details.push(text(pr.label()).size(11));
+                }
+                if let Some(badge) = session {
+                    details = details.push(text(badge.label()).size(11).color(p.muted()));
                 }
                 let label = tooltip(
                     label,

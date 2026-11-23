@@ -29,6 +29,11 @@ impl App {
             Message::WindowFocused => self.refresh_all_automatically(),
             Message::WatchTick => self.watch_tick(),
             Message::Watched(request, fingerprints) => self.watched(request, fingerprints),
+            Message::SessionPollTick => self.poll_sessions(),
+            Message::SessionsPolled(request, reports) => {
+                self.sessions_polled(request, reports);
+                Task::none()
+            }
             Message::ToggleSidebar => self.toggle_sidebar(),
             Message::SidebarHover(zone, entered) => self.sidebar_hover(zone, entered),
             Message::SidebarPreviewExpired(epoch) => self.sidebar_preview_expired(epoch),
@@ -39,6 +44,8 @@ impl App {
             }
             Message::SelectWorktree(id, path) => {
                 self.select(id, Some(path.clone()));
+                // The user is about to look at this session: its news is seen.
+                self.mark_session_seen(id, &path);
                 Task::batch([
                     self.connect(),
                     self.lookup_pull_requests(id, Lookup::Worktree(&path)),

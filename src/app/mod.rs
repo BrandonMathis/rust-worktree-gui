@@ -13,6 +13,7 @@
 //! | `auto_refresh` | Refreshing on window focus and when Git metadata changes |
 //! | `projects` | Bookmarks, refreshing worktrees from Git, display names |
 //! | `pull_requests` | PR badge lookups |
+//! | `sessions` | tmux session activity badges |
 //! | `terminal_pane` | The embedded terminal's connection state |
 //! | `creation` | The New Project / New Worktree form (a nested component) |
 //! | `sidebar` | Sidebar state and view |
@@ -27,6 +28,7 @@ mod auto_refresh;
 mod creation;
 mod projects;
 mod pull_requests;
+mod sessions;
 mod sidebar;
 mod terminal_pane;
 mod update;
@@ -45,11 +47,13 @@ use crate::{
     settings,
     terminal_config::Preferences,
     theme::{self, Palette},
+    tmux::SessionActivity,
     watch::Fingerprint,
 };
 use iced::{Subscription, Task};
 use projects::RefreshKind;
 use pull_requests::PullRequestCheck;
+use sessions::Session;
 use sidebar::SidebarPreview;
 pub use sidebar::SidebarZone;
 use std::collections::BTreeMap;
@@ -67,7 +71,7 @@ use {
 
 const WORKTREE_NAME_INPUT: &str = "worktree-name-input";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProjectId(usize);
 
 #[derive(Clone, Copy, Debug)]
@@ -86,6 +90,9 @@ pub struct App {
     /// The Git metadata check in flight, if any (see `auto_refresh`).
     watch_request: Option<u64>,
     next_watch_id: u64,
+    /// The tmux session poll in flight, if any (see `sessions`).
+    session_request: Option<u64>,
+    next_session_request: u64,
     next_console_id: u64,
     pr_request_id: u64,
     console: ConsoleState,
@@ -122,6 +129,8 @@ struct Project {
     /// transient Git error doesn't make the selected worktree look deleted.
     refresh_error: Option<String>,
     pull_requests: BTreeMap<PathBuf, PullRequestCheck>,
+    /// tmux sessions of this project's worktrees, from the latest poll.
+    sessions: BTreeMap<PathBuf, Session>,
     open_after_refresh: Option<PathBuf>,
 }
 
@@ -155,6 +164,10 @@ pub enum Message {
     WatchTick,
     /// Fingerprints from a `WatchTick` check, tagged with its request id.
     Watched(u64, Vec<(ProjectId, Fingerprint)>),
+    /// Time to poll tmux for session activity.
+    SessionPollTick,
+    /// Session activity from a `SessionPollTick` poll, tagged with its request id.
+    SessionsPolled(u64, Vec<((ProjectId, PathBuf), SessionActivity)>),
     ToggleSidebar,
     SidebarHover(SidebarZone, bool),
     SidebarPreviewExpired(u64),
@@ -242,6 +255,8 @@ impl App {
             next_refresh_id: 0,
             watch_request: None,
             next_watch_id: 0,
+            session_request: None,
+            next_session_request: 0,
             next_console_id: 0,
             pr_request_id: 0,
             console: ConsoleState::default(),
@@ -279,6 +294,7 @@ impl App {
                 worktree,
             };
             if self.selection.as_ref() != Some(&selection) {
+                self.leave_session();
                 self.selection = Some(selection);
                 self.on_selection_changed();
             }
@@ -315,6 +331,7 @@ impl App {
             terminal,
             settings,
             self.watch_subscription(),
+            self.session_subscription(),
             iced::event::listen_with(window_events),
         ])
     }

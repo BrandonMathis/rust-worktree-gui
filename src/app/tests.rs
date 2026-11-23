@@ -774,3 +774,58 @@ fn changed_git_metadata_starts_an_automatic_refresh() {
     assert!(app.projects[0].refresh_id.is_some());
     assert_eq!(app.projects[0].refresh_kind, RefreshKind::Automatic);
 }
+
+#[test]
+fn session_badges_show_live_output_and_bells_and_clear_when_selected() {
+    use crate::tmux::SessionActivity;
+    use sessions::SessionBadge;
+    let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    let report = |last_activity, bell| {
+        vec![(
+            (id, linked.clone()),
+            SessionActivity {
+                last_activity,
+                bell,
+            },
+        )]
+    };
+    let badge = |app: &App, path: &Path| app.projects[0].session_badge(path);
+
+    assert_eq!(app.update(Message::SessionPollTick).units(), 1);
+    assert_eq!(
+        app.update(Message::SessionPollTick).units(),
+        0,
+        "one poll at a time"
+    );
+    let request = app.session_request.unwrap();
+    app.sessions_polled(request, report(100, false));
+    assert_eq!(badge(&app, &linked), Some(SessionBadge::Live), "a baseline");
+    assert_eq!(badge(&app, &root), None, "no session, no badge");
+
+    let poll = |app: &mut App, reports| {
+        let _ = app.update(Message::SessionPollTick);
+        let request = app.session_request.unwrap();
+        let _ = app.update(Message::SessionsPolled(request, reports));
+    };
+    poll(&mut app, report(200, false));
+    assert_eq!(badge(&app, &linked), Some(SessionBadge::Activity));
+    poll(&mut app, report(200, true));
+    assert_eq!(badge(&app, &linked), Some(SessionBadge::Bell));
+
+    let _ = app.update(Message::SessionPollTick);
+    let request = app.session_request.unwrap();
+    let _ = app.update(Message::SessionsPolled(request - 1, report(300, false)));
+    assert_eq!(badge(&app, &linked), Some(SessionBadge::Bell), "stale poll");
+    let _ = app.update(Message::SessionsPolled(request, report(200, true)));
+
+    // Opening the worktree clears its unseen output and bell.
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    assert_eq!(badge(&app, &linked), Some(SessionBadge::Live));
+    poll(&mut app, report(200, false));
+    assert_eq!(badge(&app, &linked), Some(SessionBadge::Live));
+
+    // The session ended (or the server stopped): the badge goes away quietly.
+    poll(&mut app, Vec::new());
+    assert_eq!(badge(&app, &linked), None);
+    assert!(app.notice.is_none());
+}

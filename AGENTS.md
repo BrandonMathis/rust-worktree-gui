@@ -41,6 +41,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `app/update.rs` | `App::update`: one arm per message, each calling a named handler. Small handlers (quit, picker, menus, rename, Settings). |
 | `app/projects.rs` | Bookmarks, refresh from Git (keeps the last good inventory on error), selection reconcile, forget, display names. |
 | `app/pull_requests.rs` | PR lookups per worktree and the header badge. |
+| `app/sessions.rs` | tmux session badges (live, new output, bell) from a background `list-sessions` poll. |
 | `app/auto_refresh.rs`, `watch.rs` | Automatic refresh on window focus and when a repository's Git metadata fingerprint changes (polled with `stat`). |
 | `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, focus, and the header status and pane for a worktree. |
 | `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
@@ -50,7 +51,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `config.rs` | Bookmark store in `~/Library/Application Support/Worktree Browser/projects.json`, and the shared atomic JSON write. |
 | `theme.rs` | The palette (eleven Dracula colors), presets, hex/HSV conversion, and the saved `theme.json`. |
 | `settings.rs`, `color_wheel.rs` | Full-window Settings modal (a nested Elm component returning an `Outcome`); canvas hue/saturation wheel. |
-| `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup. |
+| `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup, read-only session activity. |
 | `terminal.rs` | Wraps the `iced_term` widget (`Console`). |
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
 | `pull_request.rs` | `gh pr view` lookup and validation of the HTTPS PR URL. |

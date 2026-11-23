@@ -1,5 +1,6 @@
 use iced_term::settings::BackendSettings;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::env;
 use std::os::unix::{
     ffi::{OsStrExt, OsStringExt},
@@ -65,6 +66,78 @@ pub fn pane_directory(common_dir: &Path, worktree: &Path) -> Option<PathBuf> {
     }
     let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
     (path.is_absolute() && path.is_dir()).then_some(path)
+}
+
+/// What the app's tmux server reports about one session, for the sidebar's
+/// activity badges.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionActivity {
+    /// When the session last had output, in seconds since the Unix epoch.
+    pub last_activity: u64,
+    /// A window rang the bell and nobody has looked at it since. tmux clears
+    /// the flag when a client views that window.
+    pub bell: bool,
+}
+
+/// One `list-sessions` line per session: name, last activity, and the list of
+/// windows with alerts (`!` marks a bell). Tabs can't occur in `wt-` names.
+const LIST_FORMAT: &str = "#{session_name}\t#{session_activity}\t#{session_alerts}";
+
+/// Reads every session on the app's socket in one `tmux list-sessions` call
+/// and matches them to `worktrees` (`(key, common_dir, worktree)`) by the
+/// session naming scheme. Read-only. A missing tmux or a server that isn't
+/// running means no sessions, not an error. Blocking: run it off the UI thread.
+pub fn session_activity<K>(worktrees: Vec<(K, PathBuf, PathBuf)>) -> Vec<(K, SessionActivity)> {
+    let Ok(executable) = find_tmux() else {
+        return Vec::new();
+    };
+    let sessions = list_sessions(tmux_command(&executable));
+    match_sessions(&sessions, worktrees)
+}
+
+fn list_sessions(mut tmux: Command) -> BTreeMap<String, SessionActivity> {
+    match tmux.args(["list-sessions", "-F", LIST_FORMAT]).output() {
+        // "no server running" exits non-zero: that just means no sessions.
+        Ok(out) if out.status.success() => parse_sessions(&out.stdout),
+        _ => BTreeMap::new(),
+    }
+}
+
+fn parse_sessions(stdout: &[u8]) -> BTreeMap<String, SessionActivity> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let name = fields.next()?;
+            let last_activity = fields.next()?.parse().ok()?;
+            let alerts = fields.next()?;
+            let activity = SessionActivity {
+                last_activity,
+                bell: alerts.contains('!'),
+            };
+            Some((name.to_owned(), activity))
+        })
+        .collect()
+}
+
+fn match_sessions<K>(
+    sessions: &BTreeMap<String, SessionActivity>,
+    worktrees: Vec<(K, PathBuf, PathBuf)>,
+) -> Vec<(K, SessionActivity)> {
+    if sessions.is_empty() {
+        return Vec::new();
+    }
+    worktrees
+        .into_iter()
+        .filter_map(|(key, common_dir, worktree)| {
+            // Names hash the canonical path, as `prepare` does.
+            let names = SessionNames::new(&common_dir, &worktree.canonicalize().ok()?);
+            let activity = sessions
+                .get(names.short())
+                .or_else(|| sessions.get(&names.legacy))?;
+            Some((key, activity.clone()))
+        })
+        .collect()
 }
 
 fn settings(program: String, name: &str, worktree: PathBuf) -> BackendSettings {
@@ -245,6 +318,126 @@ mod tests {
         assert_eq!(spec.env["SHELL"], "/bin/zsh");
         assert_eq!(spec.working_directory, Some(worktree));
         assert_eq!(spec.env["TMUX"], "");
+    }
+
+    /// A throwaway tmux server on its own socket, with no config file. It is
+    /// killed on drop and never touches the user's `worktree-browser` server.
+    pub(crate) struct PrivateServer {
+        program: PathBuf,
+        socket: PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    impl PrivateServer {
+        /// `None` (skip the test) when tmux isn't installed.
+        pub(crate) fn start() -> Option<Self> {
+            let program = find_tmux().ok()?;
+            let dir = tempfile::tempdir().unwrap();
+            Some(Self {
+                program,
+                socket: dir.path().join("sock"),
+                _dir: dir,
+            })
+        }
+
+        pub(crate) fn command(&self) -> Command {
+            let mut command = Command::new(&self.program);
+            command
+                .arg("-S")
+                .arg(&self.socket)
+                .args(["-f", "/dev/null"]);
+            command
+        }
+
+        /// Starts a detached session running `program` with `args`.
+        pub(crate) fn new_session(&self, name: &str, program: &[&str]) {
+            assert!(succeeded(
+                self.command()
+                    .args(["new-session", "-d", "-x", "80", "-y", "24", "-s", name])
+                    .args(program)
+            ));
+        }
+    }
+
+    impl Drop for PrivateServer {
+        fn drop(&mut self) {
+            let _ = self.command().arg("kill-server").output();
+        }
+    }
+
+    #[test]
+    fn parses_session_activity_and_bell_alerts() {
+        let parsed = parse_sessions(
+            b"wt-0123456789\t1700000000\t\n\
+              wt-abcdefabcd\t1700000100\t0!,1#\n\
+              not a session line\n\
+              wt-bad\tnot-a-time\t\n",
+        );
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(
+            parsed["wt-0123456789"],
+            SessionActivity {
+                last_activity: 1_700_000_000,
+                bell: false
+            }
+        );
+        assert!(parsed["wt-abcdefabcd"].bell);
+    }
+
+    #[test]
+    fn reports_live_sessions_and_bells_by_worktree_from_a_private_server() {
+        let Some(server) = PrivateServer::start() else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let (ringing, quiet, idle) = (
+            tmp.path().join("ringing tree"),
+            tmp.path().join("quiet tree"),
+            tmp.path().join("no session"),
+        );
+        for dir in [&ringing, &quiet, &idle] {
+            std::fs::create_dir(dir).unwrap();
+        }
+        let common_dir = PathBuf::from("/repo/.git");
+        let name = |dir: &Path| {
+            SessionNames::new(&common_dir, &dir.canonicalize().unwrap())
+                .short()
+                .to_owned()
+        };
+        server.new_session(
+            &name(&ringing),
+            &["/bin/sh", "-c", "printf '\\a'; exec sleep 60"],
+        );
+        server.new_session(&name(&quiet), &["/bin/sleep", "60"]);
+        let worktrees = || {
+            vec![
+                ("ringing", common_dir.clone(), ringing.clone()),
+                ("quiet", common_dir.clone(), quiet.clone()),
+                ("idle", common_dir.clone(), idle.clone()),
+            ]
+        };
+
+        // tmux flags the bell asynchronously.
+        let mut found = Vec::new();
+        for _ in 0..50 {
+            found = match_sessions(&list_sessions(server.command()), worktrees());
+            if found
+                .iter()
+                .any(|(key, activity)| *key == "ringing" && activity.bell)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let keys: Vec<_> = found.iter().map(|(key, _)| *key).collect();
+        assert_eq!(keys, ["ringing", "quiet"], "no session, no badge");
+        assert!(found[0].1.bell);
+        assert!(!found[1].1.bell);
+        assert!(found[1].1.last_activity > 0);
+
+        // A server that isn't running is quiet: no sessions, no error.
+        drop(server);
+        assert!(list_sessions(Command::new("/nonexistent/tmux")).is_empty());
     }
 
     #[test]

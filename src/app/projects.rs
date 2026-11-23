@@ -68,6 +68,7 @@ impl App {
             inventory: None,
             refresh_error: None,
             pull_requests: BTreeMap::new(),
+            sessions: BTreeMap::new(),
             open_after_refresh: None,
         });
         id
