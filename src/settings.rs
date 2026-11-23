@@ -11,6 +11,7 @@ use crate::theme::{self, Hsv, Palette, Preset, Slot};
 use crate::{color_wheel, icons};
 use iced::widget::{
     Space, Svg, button, column, container, pick_list, row, scrollable, slider, text, text_input,
+    tooltip,
 };
 use iced::{Center, Element, Fill};
 
@@ -151,14 +152,32 @@ impl Draft {
             .on_press(Message::Page(page))
             .into()
         });
+        // The gear stays in the bottom-left corner, where the main sidebar
+        // draws it, so a second click toggles Settings off. It is drawn
+        // pressed (`Selected`) to show Settings is open. Closing this way
+        // discards the draft, like Escape. Padding 6 matches the main
+        // sidebar so the gear doesn't jump when the two screens swap.
+        let close = tooltip(
+            button(icons::settings(14, p.muted()))
+                .padding(4)
+                .style(style::button(p, Button::Selected))
+                .on_press(Message::Cancel),
+            container(text("Close Settings").size(11))
+                .padding([3, 5])
+                .style(style::panel(p, Panel::Console)),
+            tooltip::Position::Bottom,
+        )
+        .delay(std::time::Duration::from_millis(400));
         let sidebar = container(
             column![
                 text("Settings").size(13).color(p.muted()),
-                column(pages).spacing(2)
+                column(pages).spacing(2),
+                Space::new().height(Fill),
+                close,
             ]
             .spacing(8),
         )
-        .padding(8)
+        .padding(6)
         .width(180)
         .height(Fill)
         .style(style::panel(p, Panel::Glass));

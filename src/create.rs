@@ -36,7 +36,38 @@ pub struct Draft {
     pub submitting: bool,
 }
 
+/// An edit in the creation form. The form is a nested component, like
+/// `settings::Draft`: the app forwards these to [`Draft::update`], which
+/// handles the edits itself and reports an [`Outcome`] for the app to act on.
+#[derive(Debug, Clone)]
+pub enum Message {
+    Name(String),
+    Branch(String),
+    Base(String),
+    Confirm,
+    Cancel,
+}
+
+/// What the app must do after a [`Message`]: submitting and closing the form
+/// need app state (the folder picker, Git, bookmarks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Confirm,
+    Cancel,
+}
+
 impl Draft {
+    pub fn update(&mut self, message: Message) -> Option<Outcome> {
+        match message {
+            Message::Name(name) => self.name = name,
+            Message::Branch(branch) => self.branch = branch,
+            Message::Base(base) => self.base = base,
+            Message::Confirm => return Some(Outcome::Confirm),
+            Message::Cancel => return Some(Outcome::Cancel),
+        }
+        None
+    }
+
     pub fn new(kind: Kind, parent: PathBuf) -> Self {
         Self {
             kind,
