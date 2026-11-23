@@ -279,11 +279,17 @@ impl App {
                         content.into(),
                     )
                 }
+                // Same wrapper as `Attached`: iced keeps widget state by tree
+                // position, so the terminal keeps its focus and scroll state
+                // through the switch.
                 ConsoleState::Switching { console, .. } => (
                     "Connecting…",
                     p.muted(),
                     Some(("Cancel", Message::Detach)),
-                    console.view().map(Message::Terminal),
+                    column![console.view().map(Message::Terminal)]
+                        .height(Fill)
+                        .spacing(6)
+                        .into(),
                 ),
                 ConsoleState::Failed(error) => (
                     "Could not connect",

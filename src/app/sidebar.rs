@@ -56,6 +56,32 @@ impl SidebarPreview {
     }
 }
 
+/// The red `!` on a project whose last refresh failed. Its tooltip carries
+/// the error and what to do, because the project overview (which also shows
+/// it) can't be reached while a worktree is selected.
+fn refresh_error_marker(error: Option<&str>, p: Palette) -> Element<'_, Message> {
+    let Some(error) = error else {
+        return text("").into();
+    };
+    let details = column![
+        text("Could not read Git").size(12).color(p.red),
+        text(error).size(11),
+        text("Refresh to try again, or use ⋮ → Replace Anchor… to pick a live checkout.")
+            .size(11)
+            .color(p.muted()),
+    ]
+    .spacing(3);
+    tooltip(
+        text("!").color(p.red),
+        container(details)
+            .max_width(420)
+            .padding(7)
+            .style(style::panel(p, Panel::Console)),
+        tooltip::Position::Right,
+    )
+    .into()
+}
+
 /// The one status icon shown left of each worktree in the sidebar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WorktreeIcon {
@@ -218,12 +244,7 @@ impl App {
                     )
                     .clip(true)
                     .width(Fill),
-                    text(if project.refresh_error.is_some() {
-                        "!"
-                    } else {
-                        ""
-                    })
-                    .color(p.red),
+                    refresh_error_marker(project.refresh_error.as_deref(), p),
                     Space::new().width(22),
                 ]
                 .spacing(4)
