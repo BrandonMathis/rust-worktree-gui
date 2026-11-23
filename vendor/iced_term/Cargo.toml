@@ -7,7 +7,7 @@ repository = "https://github.com/Harzu/iced_term"
 publish = false
 
 [dependencies]
-alacritty_terminal = "0.25.1"
+alacritty_terminal = "0.26.0"
 anyhow = "1.0.102"
 iced = { version = "0.14.0", features = ["canvas", "lazy", "advanced"] }
 iced_core = "0.14.0"

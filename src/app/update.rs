@@ -45,6 +45,12 @@ impl App {
                 self.toggle_project(id);
                 Task::none()
             }
+            Message::ReorderProject { source, before } => {
+                if let Err(error) = self.reorder_project(source, before) {
+                    self.notice = Some(error);
+                }
+                Task::none()
+            }
             Message::SelectWorktree(id, path) => {
                 // Clicking the selected worktree again must not re-run `gh`.
                 let changed = self.selection.as_ref().is_none_or(|selection| {

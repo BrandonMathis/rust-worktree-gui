@@ -57,6 +57,10 @@ icon!(
 );
 icon!(chevron_right, r#"<path d="m7.5 4.5 5.5 5.5-5.5 5.5"/>"#);
 icon!(chevron_down, r#"<path d="m4.5 7.5 5.5 5.5 5.5-5.5"/>"#);
+icon!(
+    grip,
+    r#"<path d="M7 5h.1M13 5h.1M7 10h.1M13 10h.1M7 15h.1M13 15h.1" stroke-width="2.5"/>"#
+);
 icon!(folder, r#"<path d="M3 5h5l1.6 2H17v9H3z"/>"#);
 icon!(add, r#"<path d="M10 4v12M4 10h12"/>"#);
 icon!(
