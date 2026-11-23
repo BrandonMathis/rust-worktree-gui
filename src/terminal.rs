@@ -89,6 +89,14 @@ impl Console {
         !self.exited
     }
 
+    pub fn paste_path(&mut self, path: &Path) {
+        let input = path_paste_text(path);
+        self.update(Event::BackendCall(
+            self.widget.id,
+            BackendCommand::PasteSingleLine(input),
+        ));
+    }
+
     pub fn failure(&self) -> Option<String> {
         self.status.filter(|&status| status != 0).map(|status| {
             format!("Terminal client exited with status {status}. Reconnect to try again.")
@@ -104,5 +112,82 @@ impl Console {
         }
         let action = self.widget.handle(Command::ProxyToBackend(cmd));
         self.exited = matches!(action, iced_term::actions::Action::Shutdown);
+    }
+}
+
+fn path_paste_text(path: &Path) -> String {
+    let mut text = match path.to_str() {
+        Some(path) if !path.chars().any(char::is_control) => {
+            if path
+                .chars()
+                .all(|c| c.is_alphanumeric() || "/._-".contains(c))
+            {
+                path.to_owned()
+            } else {
+                format!("'{}'", path.replace('\'', "'\\''"))
+            }
+        }
+        _ => {
+            // zsh's $'…' quoting can preserve control characters and non-UTF-8
+            // bytes without sending them as keystrokes to the terminal.
+            let mut quoted = String::from("$'");
+            for chunk in path.as_os_str().as_encoded_bytes().utf8_chunks() {
+                for ch in chunk.valid().chars() {
+                    match ch {
+                        '\'' | '\\' => {
+                            quoted.push('\\');
+                            quoted.push(ch);
+                        }
+                        ch if ch.is_control() => {
+                            for byte in ch.encode_utf8(&mut [0; 4]).bytes() {
+                                quoted.push_str(&format!("\\{byte:03o}"));
+                            }
+                        }
+                        ch => quoted.push(ch),
+                    }
+                }
+                for byte in chunk.invalid() {
+                    quoted.push_str(&format!("\\{byte:03o}"));
+                }
+            }
+            quoted.push('\'');
+            quoted
+        }
+    };
+    // iced emits a separate event for each file in a multi-file drop.
+    text.push(' ');
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropped_paths_are_separated_and_quoted_for_the_shell() {
+        let paths = ["/tmp/diagram.png", "/tmp/plan d'été; $(whoami).jpg"];
+        let text: String = paths
+            .iter()
+            .map(|path| path_paste_text(Path::new(path)))
+            .collect();
+        assert_eq!(
+            text,
+            "/tmp/diagram.png '/tmp/plan d'\\''été; $(whoami).jpg' "
+        );
+    }
+
+    #[test]
+    fn dropped_paths_never_send_control_keystrokes() {
+        let text = path_paste_text(Path::new("/tmp/a\nb\tc\u{1b}[201~d\r.png"));
+        assert_eq!(text, "$'/tmp/a\\012b\\011c\\033[201~d\\015.png' ");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropped_paths_preserve_non_utf8_bytes() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        let path = Path::new(OsStr::from_bytes(b"/tmp/a\xff7.png"));
+        assert_eq!(path_paste_text(path), "$'/tmp/a\\3777.png' ");
     }
 }

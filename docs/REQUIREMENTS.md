@@ -25,6 +25,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - Each worktree has its own tmux session, which is resumed every time you come back. Switching worktrees, hiding the sidebar or quitting the app never stops your shell.
 - Sessions use a private tmux socket but your own `~/.tmux.conf`. New shells are zsh.
 - Session names are short (`wt-` plus 10 characters) and stay the same if you rename the branch.
+- Drop images, files or folders into the window to paste their shell-quoted paths into the attached terminal without running a command.
 
 **Feels like your terminal**
 - The embedded terminal uses your Alacritty font, size, colors and literal-text key bindings, with the same cell size as standalone Alacritty.

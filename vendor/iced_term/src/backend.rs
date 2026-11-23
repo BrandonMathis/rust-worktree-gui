@@ -29,6 +29,8 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 #[derive(Debug, Clone)]
 pub enum Command {
     Write(Vec<u8>),
+    /// Paste printable, single-line text supplied by the host (e.g. a dropped path).
+    PasteSingleLine(String),
     WheelScroll(i32, Modifiers, Point),
     Resize(Option<Size<f32>>, Option<Size<f32>>),
     SelectStart(SelectionType, (f32, f32)),
@@ -220,6 +222,17 @@ impl Backend {
                 };
             },
             Command::Write(input) => {
+                self.write(input);
+                term.scroll_display(Scroll::Bottom);
+            },
+            Command::PasteSingleLine(text) => {
+                // Let the foreground program handle the whole text as a paste,
+                // rather than as individual keystrokes, when it requests this mode.
+                let input = if term.mode().contains(TermMode::BRACKETED_PASTE) {
+                    format!("\x1b[200~{text}\x1b[201~").into_bytes()
+                } else {
+                    text.into_bytes()
+                };
                 self.write(input);
                 term.scroll_display(Scroll::Bottom);
             },

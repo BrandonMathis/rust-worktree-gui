@@ -25,6 +25,8 @@ WORKTREE_BROWSER_TMUX=/opt/homebrew/bin/tmux cargo run --locked
 
 To add a worktree, hover the project name and choose **⋮ → New Worktree…**. Choose a new branch, base ref, and checkout location, then confirm **Create Worktree**. The default base is `HEAD` of the selected checkout (or the project anchor). The app refreshes the project and opens the new worktree in the terminal. A newly initialized repository needs its first commit before it can have linked worktrees.
 
+Drag images, other files, or folders from Finder into the Worktree Browser window while a terminal is attached. Their paths are pasted into the active tmux pane, quoted when needed and separated by spaces. Dropping never presses Return or uploads the files.
+
 With tmux mouse mode enabled, scroll over a pane to use that pane’s tmux history. Hold **Shift** to bypass tmux mouse handling and scroll the embedded terminal’s own history.
 
 Each session is identified by its repository and canonical worktree path, not its branch name. Renaming a branch keeps its session; moving the checkout to a new path starts a different one. tmux sessions persist while their server is running, not across a reboot. The browser keeps them on a separate tmux socket, but tmux reads your normal configuration (such as `~/.tmux.conf`) when that server starts. After editing the config, reload it without stopping your sessions with `tmux -L worktree-browser source-file ~/.tmux.conf` (substitute your config path if different). Inspect or attach to sessions from another terminal with `tmux -L worktree-browser list-sessions` or `tmux -L worktree-browser attach -t <name>`.
