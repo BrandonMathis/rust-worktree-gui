@@ -28,6 +28,7 @@ ruby scripts/test/dependency_health_test.rb          # tests for that report
 - When you add or change behavior, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
 - Don't keep requirement counts or totals in `docs/frd/README.md` or `docs/REQUIREMENTS.md`. Every feature would edit the same lines and cause merge conflicts.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
+- `PLAN.md` is the original external-Alacritty plan and is historical. Don't treat it as current.
 
 ## Screenshots
 
@@ -38,7 +39,6 @@ cargo build --locked --features capture && ruby script/capture/capture.rb   # PN
 ```
 
 When a UI change adds or moves a key state, update the `states` list in `capture.rb`.
-- `PLAN.md` is the original external-Alacritty plan and is historical. Don't treat it as current.
 
 ## Architecture
 
