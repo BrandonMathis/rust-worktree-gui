@@ -294,13 +294,7 @@ fn expanding_another_project_keeps_the_selected_worktree_terminal_and_pr() {
         .bookmark(PickMode::Add, git::discover(&other).unwrap())
         .unwrap();
     let _ = app.update(Message::SelectWorktree(id, linked.clone()));
-    let request = app.pr_request_id;
-    let _ = app.update(Message::PullRequestFound(
-        id,
-        linked.clone(),
-        request,
-        Some(PullRequest::for_test(2)),
-    ));
+    answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(2, "topic")]));
     app.console = ConsoleState::Connecting(6);
 
     for expanded in [true, false] {
@@ -323,13 +317,7 @@ fn expanding_another_project_keeps_the_selected_worktree_terminal_and_pr() {
 fn failed_refresh_keeps_the_selection_terminal_and_pr_badges() {
     let (_tmp, mut app, id, _root, linked) = app_with_linked_checkout();
     let _ = app.update(Message::SelectWorktree(id, linked.clone()));
-    let request = app.pr_request_id;
-    let _ = app.update(Message::PullRequestFound(
-        id,
-        linked.clone(),
-        request,
-        Some(PullRequest::for_test(7)),
-    ));
+    answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(7, "topic")]));
     app.console = ConsoleState::Connecting(4);
 
     let _ = app.refresh(id);
@@ -392,6 +380,29 @@ fn adding_another_checkout_of_a_bookmarked_repository_explains_replace_anchor() 
 }
 
 #[test]
+fn refresh_is_usable_again_after_git_times_out() {
+    let (_tmp, mut app, _id, _root, _linked) = app_with_linked_checkout();
+    assert_eq!(app.update(Message::Refresh).units(), 1);
+    assert_eq!(
+        app.update(Message::Refresh).units(),
+        0,
+        "already refreshing"
+    );
+    // The shared runner kills a hung git and returns this error.
+    let refresh_id = app.projects[0].refresh_id.unwrap();
+    let timed_out = "git worktree list in /repo did not finish within 30 seconds and was stopped. Refresh to try again.";
+    let _ = app.update(Message::Refreshed(refresh_id, Err(timed_out.into())));
+    assert_eq!(app.projects[0].refresh_id, None);
+    assert_eq!(app.update(Message::Refresh).units(), 1);
+}
+
+/// Answers the PR lookup in flight for `id` with `prs` (`None`: gh failed).
+fn answer_pr_lookup(app: &mut App, id: ProjectId, prs: Option<Vec<PullRequest>>) {
+    let request = app.pr_request_id;
+    let _ = app.update(Message::PullRequestsListed(id, request, prs));
+}
+
+#[test]
 fn forgetting_the_selected_project_detaches_and_selects_the_next() {
     let (tmp, mut app, id, _root, linked) = app_with_linked_checkout();
     let other = tmp.path().join("other repo");
@@ -400,14 +411,8 @@ fn forgetting_the_selected_project_detaches_and_selects_the_next() {
     let next = app
         .bookmark(PickMode::Add, git::discover(&other).unwrap())
         .unwrap();
-    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
-    let request = app.pr_request_id;
-    let _ = app.update(Message::PullRequestFound(
-        id,
-        linked,
-        request,
-        Some(PullRequest::for_test(5)),
-    ));
+    let _ = app.update(Message::SelectWorktree(id, linked));
+    answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(5, "topic")]));
     app.console = ConsoleState::Connecting(3);
     assert!(app.selected_pull_request().is_some());
 
@@ -425,35 +430,74 @@ fn forgetting_the_selected_project_detaches_and_selects_the_next() {
 }
 
 #[test]
-fn refreshing_checks_all_worktrees_and_invalidates_in_flight_pr_results() {
+fn refresh_keeps_pr_badges_until_the_new_lookup_answers() {
     let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
-    let _ = app.refresh(id);
-    let git_request = app.projects[0].refresh_id.unwrap();
-    let inventory = git::inventory(&app.projects[0].checkout);
-    let _ = app.update(Message::Refreshed(git_request, inventory));
-    let prior = app.projects[0].pull_requests[&linked].request_id.unwrap();
-    assert!(app.projects[0].pull_requests[&root].request_id.is_some());
-
-    let _ = app.refresh(id);
-    let git_request = app.projects[0].refresh_id.unwrap();
-    let inventory = git::inventory(&app.projects[0].checkout);
-    let _ = app.update(Message::Refreshed(git_request, inventory));
-    let current = app.projects[0].pull_requests[&linked].request_id.unwrap();
-    assert_ne!(prior, current);
-    let _ = app.update(Message::PullRequestFound(
+    refresh_now(&mut app, id);
+    assert!(
+        app.projects[0].pull_requests.in_flight(),
+        "one lookup per project"
+    );
+    let first = app.pr_request_id;
+    answer_pr_lookup(
+        &mut app,
         id,
-        linked.clone(),
-        prior,
-        Some(PullRequest::for_test(8)),
-    ));
-    assert!(app.projects[0].pull_request(&linked).is_none());
-    let _ = app.update(Message::PullRequestFound(
-        id,
-        linked.clone(),
-        current,
-        Some(PullRequest::for_test(9)),
-    ));
+        Some(vec![
+            PullRequest::for_test(9, "topic"),
+            PullRequest::for_test(3, "main"),
+        ]),
+    );
     assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 9);
+    assert_eq!(app.projects[0].pull_request(&root).unwrap().number, 3);
+
+    // A refresh keeps the badges while the next lookup runs, so they don't flicker,
+    // and a late answer to the previous lookup is ignored.
+    refresh_now(&mut app, id);
+    assert!(app.pr_request_id > first);
+    assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 9);
+    let stale = vec![PullRequest::for_test(8, "topic")];
+    let _ = app.update(Message::PullRequestsListed(id, first, Some(stale)));
+    assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 9);
+
+    // A worktree that changes branch loses its badge at once; the others keep theirs.
+    run_git(&linked, &["checkout", "-qb", "other"]);
+    refresh_now(&mut app, id);
+    assert!(app.projects[0].pull_request(&linked).is_none());
+    assert_eq!(app.projects[0].pull_request(&root).unwrap().number, 3);
+    answer_pr_lookup(
+        &mut app,
+        id,
+        Some(vec![
+            PullRequest::for_test(9, "topic"),
+            PullRequest::for_test(4, "other"),
+            PullRequest::for_test(3, "main"),
+        ]),
+    );
+    assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 4);
+
+    // So does a worktree that disappears from Git.
+    run_git(
+        &root,
+        &["worktree", "remove", "--force", "../linked checkout"],
+    );
+    refresh_now(&mut app, id);
+    assert!(app.projects[0].pull_request(&linked).is_none());
+    assert_eq!(app.projects[0].pull_request(&root).unwrap().number, 3);
+}
+
+#[test]
+fn clicking_the_selected_worktree_again_does_not_look_up_its_pr_again() {
+    let (_tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+    assert_eq!(
+        app.update(Message::SelectWorktree(id, linked.clone()))
+            .units(),
+        2,
+        "tmux connection and PR lookup"
+    );
+    answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(7, "topic")]));
+    let request = app.pr_request_id;
+    assert_eq!(app.update(Message::SelectWorktree(id, linked)).units(), 0);
+    assert_eq!(app.pr_request_id, request);
+    assert_eq!(app.selected_pull_request().unwrap().number, 7);
 }
 
 #[test]
@@ -468,23 +512,15 @@ fn sidebar_icon_marks_the_main_checkout_pr_state_and_unavailable_worktrees() {
 
     // A PR on the main checkout doesn't replace its unique icon.
     let _ = app.update(Message::SelectWorktree(id, root.clone()));
-    let request = app.pr_request_id;
-    let _ = app.update(Message::PullRequestFound(
+    answer_pr_lookup(
+        &mut app,
         id,
-        root.clone(),
-        request,
-        Some(PullRequest::for_test(3)),
-    ));
+        Some(vec![
+            PullRequest::for_test(3, "main"),
+            PullRequest::for_test(4, "topic"),
+        ]),
+    );
     assert_eq!(icon(&app, &root), WorktreeIcon::Main);
-
-    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
-    let request = app.pr_request_id;
-    let _ = app.update(Message::PullRequestFound(
-        id,
-        linked.clone(),
-        request,
-        Some(PullRequest::for_test(4)),
-    ));
     assert_eq!(
         icon(&app, &linked),
         WorktreeIcon::PullRequest(pull_request::Status::Open)
@@ -501,28 +537,31 @@ fn pr_badges_are_kept_for_unselected_worktrees_and_ignore_stale_results() {
     let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
     let _ = app.update(Message::SelectWorktree(id, linked.clone()));
     let request = app.pr_request_id;
-    let _ = app.update(Message::SelectWorktree(id, root));
-    let _ = app.update(Message::PullRequestFound(
-        id,
-        linked.clone(),
-        request,
-        Some(PullRequest::for_test(12)),
-    ));
+    // Selecting another worktree while the project's lookup runs doesn't start another.
+    let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    assert_eq!(app.pr_request_id, request);
+    answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(12, "topic")]));
     assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 12);
     assert!(app.selected_pull_request().is_none());
 
+    // Replace Anchor drops the badges and ignores the old anchor's lookup.
     let _ = app.update(Message::SelectWorktree(id, linked.clone()));
-    let current = app.pr_request_id;
-    assert!(current > request);
-    let _ = app.update(Message::PullRequestFound(
-        id,
-        linked.clone(),
-        request,
-        Some(PullRequest::for_test(15)),
-    ));
-    assert_eq!(app.selected_pull_request().unwrap().number, 12);
-    let _ = app.update(Message::PullRequestFound(id, linked, current, None));
+    let stale = app.pr_request_id;
+    assert!(stale > request);
+    app.bookmark(PickMode::Replace(id), git::discover(&linked).unwrap())
+        .unwrap();
     assert!(app.selected_pull_request().is_none());
+    refresh_now(&mut app, id);
+    let fresh = vec![PullRequest::for_test(15, "topic")];
+    let _ = app.update(Message::PullRequestsListed(id, stale, Some(fresh)));
+    assert!(app.selected_pull_request().is_none());
+    answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(16, "topic")]));
+    assert_eq!(app.selected_pull_request().unwrap().number, 16);
+
+    // No usable answer from gh (missing, logged out, timed out) hides the badges.
+    let _ = app.update(Message::SelectWorktree(id, root));
+    answer_pr_lookup(&mut app, id, None);
+    assert!(app.projects[0].pull_request(&linked).is_none());
 }
 
 #[test]
@@ -667,18 +706,15 @@ fn failed_theme_save_keeps_the_modal_open_and_shows_the_error() {
     assert_eq!(app.palette, Palette::default());
 }
 
-/// Answers every PR lookup in flight for `id`, numbering PRs from `first`.
+/// Answers the PR lookup in flight for `id` with one open PR per worktree
+/// branch, numbered from `first`.
 fn answer_pr_lookups(app: &mut App, id: ProjectId, first: u64) {
     let project = app.projects.iter().find(|p| p.id == id).unwrap();
-    let pending: Vec<_> = project
-        .pull_requests
-        .iter()
-        .filter_map(|(path, check)| Some((path.clone(), check.request_id?)))
+    let prs = (first..)
+        .zip(project.worktrees())
+        .filter_map(|(number, tree)| Some(PullRequest::for_test(number, tree.branch.as_deref()?)))
         .collect();
-    for (number, (path, request)) in (first..).zip(pending) {
-        let pr = Some(PullRequest::for_test(number));
-        let _ = app.update(Message::PullRequestFound(id, path, request, pr));
-    }
+    answer_pr_lookup(app, id, Some(prs));
 }
 
 /// Completes the refresh in flight for `id` with a fresh `git worktree list`.
@@ -726,24 +762,32 @@ fn automatic_refresh_keeps_pr_badges_and_runs_gh_only_for_changed_branches() {
     assert!(app.projects[0].pull_request(&root).is_some());
     assert!(app.projects[0].pull_request(&linked).is_some());
 
-    // The linked checkout switched branches outside the app: only it is
-    // looked up again. (All lookups share one task, so check which are in flight.)
-    let in_flight =
-        |app: &App, path: &Path| app.projects[0].pull_requests[path].request_id.is_some();
+    // The linked checkout switched branches outside the app: its stale badge
+    // goes at once, the other stays, and the project is listed again.
     run_git(&linked, &["checkout", "-qb", "other"]);
     let _ = app.update(Message::WindowFocused);
     assert_eq!(finish_refresh(&mut app, id).units(), 1);
     assert!(app.projects[0].pull_request(&root).is_some());
-    assert!(!in_flight(&app, &root));
     assert!(app.projects[0].pull_request(&linked).is_none());
-    assert!(in_flight(&app, &linked));
     answer_pr_lookups(&mut app, id, 3);
+    assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 4);
 
-    // Refresh pressed during an automatic refresh still re-checks every PR.
+    // A missing gh isn't retried by automatic refreshes...
+    let _ = app.update(Message::Refresh);
+    assert_eq!(
+        finish_refresh(&mut app, id).units(),
+        1,
+        "manual Refresh lists again"
+    );
+    answer_pr_lookup(&mut app, id, None);
+    let _ = app.update(Message::WindowFocused);
+    assert_eq!(finish_refresh(&mut app, id).units(), 0);
+
+    // ...but Refresh pressed during an automatic refresh still lists PRs again.
     let _ = app.update(Message::WindowFocused);
     let _ = app.update(Message::Refresh);
     assert_eq!(finish_refresh(&mut app, id).units(), 1);
-    assert!(in_flight(&app, &root) && in_flight(&app, &linked));
+    assert!(app.projects[0].pull_requests.in_flight());
 }
 
 #[test]
@@ -857,6 +901,7 @@ fn switch_id(app: &App) -> u64 {
 fn switching_worktrees_reuses_the_running_terminal_client() {
     let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
     let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    answer_pr_lookups(&mut app, id, 1);
     attach_terminal(&mut app, &root);
     let terminal = app.console.console().unwrap().id();
 

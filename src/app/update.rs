@@ -43,16 +43,29 @@ impl App {
                 Task::none()
             }
             Message::SelectWorktree(id, path) => {
+                // Clicking the selected worktree again must not re-run `gh`.
+                let changed = self.selection.as_ref().is_none_or(|selection| {
+                    selection.project != id || selection.worktree.as_ref() != Some(&path)
+                });
+                let has_branch = self
+                    .projects
+                    .iter()
+                    .find(|p| p.id == id)
+                    .and_then(|p| p.worktree(&path))
+                    .and_then(crate::pull_request::branch_to_match)
+                    .is_some();
                 self.select(id, Some(path.clone()));
                 // The user is about to look at this session: its news is seen.
                 self.mark_session_seen(id, &path);
-                Task::batch([
-                    self.connect(),
-                    self.lookup_pull_requests(id, Lookup::Worktree(&path)),
-                ])
+                let lookup = if changed && has_branch {
+                    self.lookup_pull_requests(id, Lookup::All)
+                } else {
+                    Task::none()
+                };
+                Task::batch([self.connect(), lookup])
             }
-            Message::PullRequestFound(id, path, request, pr) => {
-                self.pull_request_found(id, path, request, pr);
+            Message::PullRequestsListed(id, request, prs) => {
+                self.pull_requests_listed(id, request, prs);
                 Task::none()
             }
             Message::OpenPullRequest => self.open_pull_request(),

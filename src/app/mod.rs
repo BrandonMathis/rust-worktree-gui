@@ -12,7 +12,7 @@
 //! | `update` | `App::update`, which hands each message to a handler |
 //! | `auto_refresh` | Refreshing on window focus and when Git metadata changes |
 //! | `projects` | Bookmarks, refreshing worktrees from Git, display names |
-//! | `pull_requests` | PR badge lookups |
+//! | `pull_requests` | PR badge lookups (one `gh pr list` per project) |
 //! | `sessions` | tmux session activity badges |
 //! | `terminal_pane` | The embedded terminal's connection state |
 //! | `creation` | The New Project / New Worktree form (a nested component) |
@@ -52,7 +52,6 @@ use crate::{
 };
 use iced::{Subscription, Task};
 use projects::RefreshKind;
-use pull_requests::PullRequestCheck;
 use sessions::Session;
 use sidebar::SidebarPreview;
 pub use sidebar::SidebarZone;
@@ -128,7 +127,7 @@ struct Project {
     /// Why the latest refresh failed. The last good `inventory` is kept, so a
     /// transient Git error doesn't make the selected worktree look deleted.
     refresh_error: Option<String>,
-    pull_requests: BTreeMap<PathBuf, PullRequestCheck>,
+    pull_requests: crate::pull_request::Badges,
     /// tmux sessions of this project's worktrees, from the latest poll.
     sessions: BTreeMap<PathBuf, Session>,
     open_after_refresh: Option<PathBuf>,
@@ -174,7 +173,7 @@ pub enum Message {
     Refreshed(usize, Result<Vec<Worktree>, String>),
     ToggleProject(ProjectId),
     SelectWorktree(ProjectId, PathBuf),
-    PullRequestFound(ProjectId, PathBuf, u64, Option<PullRequest>),
+    PullRequestsListed(ProjectId, u64, Option<Vec<PullRequest>>),
     OpenPullRequest,
     PullRequestOpened(Result<(), String>),
     Reconnect,

@@ -24,7 +24,7 @@ ruby scripts/test/dependency_health_test.rb          # tests for that report
 
 ## Requirements are the spec
 
-- `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary. `docs/CODE_REVIEW.md` lists known issues and planned refactors.
+- `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary.
 - When you add or change behavior, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
 - Don't keep requirement counts or totals in `docs/frd/README.md` or `docs/REQUIREMENTS.md`. Every feature would edit the same lines and cause merge conflicts.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
@@ -54,7 +54,8 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup, read-only session activity. |
 | `terminal.rs` | Wraps the `iced_term` widget (`Console`): the worktree it shows and its tmux client's pid. |
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
-| `pull_request.rs` | `gh pr view` lookup and validation of the HTTPS PR URL. |
+| `pull_request.rs` | One `gh pr list` per project, matching PRs to worktrees by branch, validation of the HTTPS PR URL, and the per-project `Badges`. |
+| `runner.rs` | Every subprocess: tool lookup (`PATH` + Homebrew), removal of the `GIT_*` overrides, per-call timeouts. |
 | `actions.rs` | Open in Finder or VS Code, copy path. |
 | `create.rs`, `quit.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`; quit confirmation. |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
@@ -63,6 +64,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 
 ## Rules
 
+- **Never commit code review documents.** Review findings, audits and refactor wish lists (for example a `CODE_REVIEW.md`) must not be checked into source control. Keep them out of the repository (in the PR, an issue, or an untracked local file) and record the outcome as FRD rows and tests instead.
 - **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names and the theme palette are the only persisted state.
 - **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Forgetting a project removes only the bookmark.
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; paths may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.

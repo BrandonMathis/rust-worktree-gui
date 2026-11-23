@@ -35,7 +35,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - **Rename Worktree** gives a worktree a short display name. It doesn't affect Git, the folder or the tmux session. Clear the name to show the branch again.
 
 **Pull requests**
-- If the selected worktree's branch has an **open** GitHub pull request, a **PR #N** button appears in the header. Clicking it opens the PR in your browser. This uses your existing `gh` login, and the button stays hidden if anything goes wrong.
+- If the selected worktree's branch has a GitHub pull request (open first, otherwise the newest), a **PR #N** button with its state appears in the header. Clicking it opens the PR in your browser. This uses your existing `gh` login, and the button stays hidden if anything goes wrong.
 
 **Look and layout**
 - Dark Dracula theme by default, 3-pixel rounded corners, translucent "glass" panels with macOS blur.

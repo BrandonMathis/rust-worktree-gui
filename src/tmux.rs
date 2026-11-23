@@ -1,16 +1,16 @@
 use iced_term::settings::BackendSettings;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::env;
-use std::os::unix::{
-    ffi::{OsStrExt, OsStringExt},
-    fs::PermissionsExt,
-};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
+
+use crate::runner::{self, Tool};
 
 const SOCKET: &str = "worktree-browser";
-const OVERRIDE: &str = "WORKTREE_BROWSER_TMUX";
+/// Limit for each short tmux query (`has-session`, `rename-session`, `display-message`).
+const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn prepare(common_dir: &Path, worktree: &Path) -> Result<BackendSettings, String> {
     let worktree = canonical_worktree(worktree)?;
@@ -72,10 +72,8 @@ fn switch_client_with(
 
 /// The name tmux uses for the client process `pid` (usually its tty).
 fn client_name(mut tmux: Command, pid: u32) -> Option<String> {
-    let out = tmux
-        .args(["list-clients", "-F", "#{client_pid}\t#{client_name}"])
-        .output()
-        .ok()?;
+    tmux.args(["list-clients", "-F", "#{client_pid}\t#{client_name}"]);
+    let out = runner::run(&mut tmux, TIMEOUT).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -104,9 +102,8 @@ fn canonical_worktree(worktree: &Path) -> Result<PathBuf, String> {
 }
 
 fn run(command: &mut Command, action: &str) -> Result<(), String> {
-    let out = command
-        .output()
-        .map_err(|error| format!("Could not {action}: {error}"))?;
+    let out = runner::run(command, TIMEOUT)
+        .map_err(|error| format!("Could not {action}: tmux {error}"))?;
     if out.status.success() {
         Ok(())
     } else {
@@ -125,16 +122,15 @@ pub fn pane_directory(common_dir: &Path, worktree: &Path) -> Option<PathBuf> {
         names.short()
     };
     let target = format!("={name}:");
-    let out = tmux_command(&executable)
-        .args([
-            "display-message",
-            "-p",
-            "-t",
-            &target,
-            "#{pane_current_path}",
-        ])
-        .output()
-        .ok()?;
+    let mut command = tmux_command(&executable);
+    command.args([
+        "display-message",
+        "-p",
+        "-t",
+        &target,
+        "#{pane_current_path}",
+    ]);
+    let out = runner::run(&mut command, TIMEOUT).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -176,10 +172,8 @@ pub fn session_activity<K>(worktrees: Vec<(K, PathBuf, PathBuf)>) -> Vec<(K, Ses
 }
 
 fn list_sessions(mut tmux: Command) -> BTreeMap<String, SessionActivity> {
-    match tmux
-        .args(["list-windows", "-a", "-F", LIST_FORMAT])
-        .output()
-    {
+    tmux.args(["list-windows", "-a", "-F", LIST_FORMAT]);
+    match runner::run(&mut tmux, TIMEOUT) {
         // "no server running" exits non-zero: that just means no sessions.
         Ok(out) if out.status.success() => parse_sessions(&out.stdout),
         _ => BTreeMap::new(),
@@ -229,6 +223,9 @@ fn match_sessions<K>(
         .collect()
 }
 
+/// The tmux client runs in the PTY with the app's environment plus `env` below. The
+/// backend can only add variables, so the Git overrides are removed from the app's
+/// own environment at startup instead (`runner::remove_git_overrides_from_process`).
 fn settings(program: String, name: &str, worktree: PathBuf) -> BackendSettings {
     BackendSettings {
         program,
@@ -301,7 +298,7 @@ impl SessionNames {
 }
 
 fn tmux_command(executable: &Path) -> Command {
-    let mut command = Command::new(executable);
+    let mut command = runner::command(executable);
     command.args(["-L", SOCKET]);
     command
 }
@@ -311,37 +308,11 @@ fn has_session(mut tmux: Command, name: &str) -> bool {
 }
 
 fn succeeded(command: &mut Command) -> bool {
-    command.output().is_ok_and(|output| output.status.success())
+    runner::run(command, TIMEOUT).is_ok_and(|output| output.status.success())
 }
 
 fn find_tmux() -> Result<PathBuf, String> {
-    if let Some(path) = env::var_os(OVERRIDE) {
-        return validate_override(PathBuf::from(path));
-    }
-    let path = env::var_os("PATH").unwrap_or_default();
-    env::split_paths(&path)
-        .map(|dir| dir.join("tmux"))
-        .chain(["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/opt/local/bin/tmux", "/usr/bin/tmux"].map(PathBuf::from))
-        .find(|path| executable(path))
-        .ok_or_else(|| format!("tmux not found. Install it with `brew install tmux`, or set {OVERRIDE} to its executable."))
-}
-
-fn validate_override(path: PathBuf) -> Result<PathBuf, String> {
-    if executable(&path) {
-        Ok(path)
-    } else {
-        Err(format!(
-            "{OVERRIDE} must be an absolute path to an executable tmux. Could not use: {}",
-            path.display()
-        ))
-    }
-}
-
-fn executable(path: &Path) -> bool {
-    path.is_absolute()
-        && path
-            .metadata()
-            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    runner::find(Tool::Tmux)
 }
 
 #[cfg(test)]
@@ -407,6 +378,11 @@ mod tests {
         assert_eq!(spec.env["SHELL"], "/bin/zsh");
         assert_eq!(spec.working_directory, Some(worktree));
         assert_eq!(spec.env["TMUX"], "");
+        assert!(
+            spec.env
+                .keys()
+                .all(|key| !runner::GIT_OVERRIDES.contains(&key.as_str()))
+        );
     }
 
     /// A throwaway tmux server on its own socket, with no config file. It is
@@ -665,14 +641,5 @@ mod tests {
         assert_eq!(names.migrate(tmux), &names.legacy);
         assert_eq!(identity(&names.legacy), conflicting);
         assert_eq!(identity(names.short()), original);
-    }
-
-    #[test]
-    fn rejects_missing_or_relative_tmux_override() {
-        let tmp = tempfile::tempdir().unwrap();
-        let missing = validate_override(tmp.path().join("not-installed/tmux")).unwrap_err();
-        assert!(missing.contains(OVERRIDE));
-        assert!(missing.contains("not-installed/tmux"));
-        assert!(validate_override(PathBuf::from("tmux")).is_err());
     }
 }

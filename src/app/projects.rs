@@ -34,10 +34,7 @@ impl Project {
     }
 
     pub(super) fn name(&self) -> std::borrow::Cow<'_, str> {
-        let path = self.checkout.root.as_path();
-        path.file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy()
+        self.checkout.repository_name().to_string_lossy()
     }
 
     pub(super) fn worktrees(&self) -> &[Worktree] {
@@ -49,7 +46,7 @@ impl Project {
     }
 
     pub(super) fn pull_request(&self, path: &Path) -> Option<&PullRequest> {
-        self.pull_requests.get(path)?.pr.as_ref()
+        self.pull_requests.get(path)
     }
 }
 
@@ -67,7 +64,7 @@ impl App {
             fingerprint: None,
             inventory: None,
             refresh_error: None,
-            pull_requests: BTreeMap::new(),
+            pull_requests: Default::default(),
             sessions: BTreeMap::new(),
             open_after_refresh: None,
         });
@@ -315,29 +312,15 @@ impl App {
                 return Task::none();
             }
         };
-        let previous = project.inventory.replace(trees).unwrap_or_default();
+        project.inventory = Some(trees);
         project.refresh_error = None;
+        // Keep badges until the next lookup answers (no flicker), but drop any
+        // whose worktree disappeared or changed branch.
+        let worktrees = project.inventory.as_deref().unwrap_or_default();
+        project.pull_requests.retain_listed(worktrees);
         let scope = match project.refresh_kind {
-            RefreshKind::Manual => {
-                project.pull_requests.clear();
-                Lookup::All
-            }
-            // Old results can't be applied to a worktree that changed branches,
-            // but the rest are still current.
-            RefreshKind::Automatic => {
-                let current = project.inventory.as_deref().unwrap_or_default();
-                let branch = |trees: &[Worktree], path: &Path| {
-                    trees
-                        .iter()
-                        .find(|tree| tree.path == path)
-                        .map(|tree| tree.branch.clone())
-                };
-                project.pull_requests.retain(|path, _| {
-                    let now = branch(current, path);
-                    now.is_some() && now == branch(&previous, path)
-                });
-                Lookup::New
-            }
+            RefreshKind::Manual => Lookup::All,
+            RefreshKind::Automatic => Lookup::New,
         };
         self.reconcile_selection(id);
         let lookup = self.lookup_pull_requests(id, scope);
