@@ -3,7 +3,7 @@
 //! finished or is waiting for input).
 //!
 //! A background poll asks the app's tmux server about all sessions in one
-//! `list-sessions` call every few seconds. It only reads: it never kills a
+//! `list-windows -a` call every few seconds. It only reads: it never kills a
 //! session or changes an option. "Unseen" is tracked here, not in tmux, so the
 //! user's tmux config (`monitor-activity` and so on) doesn't matter.
 
@@ -25,7 +25,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(3);
 pub(super) struct Session {
     activity: SessionActivity,
     /// Output up to this time (seconds since the Unix epoch, like tmux's
-    /// `session_activity`) counts as seen.
+    /// `window_activity`) counts as seen.
     seen_until: u64,
 }
 
@@ -86,7 +86,7 @@ impl App {
         }
     }
 
-    /// Starts one background `tmux list-sessions`, unless one is still running.
+    /// Starts one background `tmux list-windows -a`, unless one is still running.
     pub(super) fn poll_sessions(&mut self) -> Task<Message> {
         if self.session_request.is_some() || self.projects.is_empty() {
             return Task::none();

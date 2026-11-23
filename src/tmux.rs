@@ -157,11 +157,13 @@ pub struct SessionActivity {
     pub bell: bool,
 }
 
-/// One `list-sessions` line per session: name, last activity, and the list of
-/// windows with alerts (`!` marks a bell). Tabs can't occur in `wt-` names.
-const LIST_FORMAT: &str = "#{session_name}\t#{session_activity}\t#{session_alerts}";
+/// One `list-windows -a` line per window: its session, when the window last
+/// had output, and whether it rang the bell unseen. (`session_activity` only
+/// moves on client input, so output is read per window.) Tabs can't occur in
+/// `wt-` names.
+const LIST_FORMAT: &str = "#{session_name}\t#{window_activity}\t#{window_bell_flag}";
 
-/// Reads every session on the app's socket in one `tmux list-sessions` call
+/// Reads every session on the app's socket in one `tmux list-windows -a` call
 /// and matches them to `worktrees` (`(key, common_dir, worktree)`) by the
 /// session naming scheme. Read-only. A missing tmux or a server that isn't
 /// running means no sessions, not an error. Blocking: run it off the UI thread.
@@ -174,28 +176,37 @@ pub fn session_activity<K>(worktrees: Vec<(K, PathBuf, PathBuf)>) -> Vec<(K, Ses
 }
 
 fn list_sessions(mut tmux: Command) -> BTreeMap<String, SessionActivity> {
-    match tmux.args(["list-sessions", "-F", LIST_FORMAT]).output() {
+    match tmux
+        .args(["list-windows", "-a", "-F", LIST_FORMAT])
+        .output()
+    {
         // "no server running" exits non-zero: that just means no sessions.
         Ok(out) if out.status.success() => parse_sessions(&out.stdout),
         _ => BTreeMap::new(),
     }
 }
 
+/// Folds window lines into one entry per session: its latest output, and a
+/// bell if any of its windows rang.
 fn parse_sessions(stdout: &[u8]) -> BTreeMap<String, SessionActivity> {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split('\t');
-            let name = fields.next()?;
-            let last_activity = fields.next()?.parse().ok()?;
-            let alerts = fields.next()?;
-            let activity = SessionActivity {
-                last_activity,
-                bell: alerts.contains('!'),
-            };
-            Some((name.to_owned(), activity))
-        })
-        .collect()
+    let mut sessions = BTreeMap::<String, SessionActivity>::new();
+    for line in String::from_utf8_lossy(stdout).lines() {
+        let mut fields = line.split('\t');
+        let (Some(name), Some(Ok(last_activity)), Some(bell)) = (
+            fields.next(),
+            fields.next().map(str::parse::<u64>),
+            fields.next(),
+        ) else {
+            continue;
+        };
+        let session = sessions.entry(name.to_owned()).or_insert(SessionActivity {
+            last_activity,
+            bell: false,
+        });
+        session.last_activity = session.last_activity.max(last_activity);
+        session.bell |= bell == "1";
+    }
+    sessions
 }
 
 fn match_sessions<K>(
@@ -444,12 +455,13 @@ mod tests {
     }
 
     #[test]
-    fn parses_session_activity_and_bell_alerts() {
+    fn parses_window_output_and_bells_into_one_entry_per_session() {
         let parsed = parse_sessions(
-            b"wt-0123456789\t1700000000\t\n\
-              wt-abcdefabcd\t1700000100\t0!,1#\n\
+            b"wt-0123456789\t1700000000\t0\n\
+              wt-abcdefabcd\t1700000100\t0\n\
+              wt-abcdefabcd\t1700000050\t1\n\
               not a session line\n\
-              wt-bad\tnot-a-time\t\n",
+              wt-bad\tnot-a-time\t0\n",
         );
         assert_eq!(parsed.len(), 2);
         assert_eq!(
@@ -459,7 +471,14 @@ mod tests {
                 bell: false
             }
         );
-        assert!(parsed["wt-abcdefabcd"].bell);
+        // The latest window wins for activity; any window's bell counts.
+        assert_eq!(
+            parsed["wt-abcdefabcd"],
+            SessionActivity {
+                last_activity: 1_700_000_100,
+                bell: true
+            }
+        );
     }
 
     #[test]
