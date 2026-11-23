@@ -4,6 +4,7 @@ mod app;
 mod capture;
 mod color_wheel;
 mod config;
+mod confirmation;
 mod create;
 mod git;
 mod icons;

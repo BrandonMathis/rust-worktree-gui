@@ -49,7 +49,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `main.rs` | Window setup, theme, font. Includes `tests/git_fixtures.rs` as a test module. |
 | `app/mod.rs` | App state (`App`, `Project`, `Selection`), `Message`, construction, subscriptions, `on_selection_changed()`, `background(...)`. |
 | `app/update.rs` | `App::update`: one arm per message, each calling a named handler. Small handlers (quit, picker, menus, rename, Settings). |
-| `app/projects.rs` | Bookmarks, refresh from Git (keeps the last good inventory on error), selection reconcile, forget, display names. |
+| `app/projects.rs` | Bookmarks, refresh from Git (keeps the last good inventory on error), selection reconcile, removal, display names. |
 | `app/pull_requests.rs` | PR lookups per worktree and the header badge. |
 | `app/sessions.rs` | tmux session badges (live, new output, bell) from a background `list-windows -a` poll. |
 | `app/auto_refresh.rs`, `watch.rs` | Automatic refresh on window focus and when a repository's Git metadata fingerprint changes (polled with `stat`). |
@@ -67,7 +67,8 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `pull_request.rs` | One `gh pr list` per project, matching PRs to worktrees by branch, validation of the HTTPS PR URL, and the per-project `Badges`. |
 | `runner.rs` | Every subprocess: tool lookup (`PATH` + Homebrew), removal of the `GIT_*` overrides, per-call timeouts. |
 | `actions.rs` | Open in Finder or VS Code, copy path. |
-| `create.rs`, `quit.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`; quit confirmation. |
+| `create.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`. |
+| `confirmation.rs`, `quit.rs` | Native confirmation sheets and the macOS quit shortcut. |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
 
 `vendor/iced_term` is a patched copy of `iced_term` 0.8.0 (via `[patch.crates-io]`). It adds things such as an explicit `cell_size` so the grid matches Alacritty's metrics. Keep patches minimal, and note why in the code you touch there.
@@ -76,7 +77,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 
 - **Never commit code review documents.** Review findings, audits and refactor wish lists (for example a `CODE_REVIEW.md`) must not be checked into source control. Keep them out of the repository (in the PR, an issue, or an untracked local file) and record the outcome as FRD rows and tests instead.
 - **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names and the theme palette are the only persisted state.
-- **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Forgetting a project removes only the bookmark.
+- **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Removing a project removes only the bookmark.
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; paths may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.
 - **No blocking work on the UI thread.** Run git, tmux, `gh` and `open` through `background(...)` or `Task::perform`, and return typed results as a `Message`. Guard async results with a request or epoch id so stale answers are ignored. Follow the existing patterns: `pr_request_id`, `refresh_id`, the `Connecting(id)` console state.
 - **tmux sessions** live on the `-L worktree-browser` socket and are named `wt-` plus 10 hex digits of SHA-256(common dir, canonical worktree path). Changing the naming scheme orphans users' running sessions, so it needs a migration (see `SessionNames::migrate`).

@@ -403,8 +403,50 @@ fn answer_pr_lookup(app: &mut App, id: ProjectId, prs: Option<Vec<PullRequest>>)
 }
 
 #[test]
-fn forgetting_the_selected_project_detaches_and_selects_the_next() {
+fn canceling_remove_project_keeps_the_bookmark_and_terminal() {
     let (tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+    let config = tmp.path().join("config/projects.json");
+    let original = Store::open_path(config.clone()).unwrap().1;
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    app.console = ConsoleState::Connecting(3);
+
+    let request = Message::MenuAction(
+        Selection {
+            project: id,
+            worktree: None,
+        },
+        MenuAction::RemoveProject,
+    );
+    assert!(app.update(request.clone()).units() > 0);
+    assert_eq!(app.projects.len(), 1, "wait for confirmation");
+    assert_eq!(Store::open_path(config.clone()).unwrap().1, original);
+    assert_eq!(app.update(request.clone()).units(), 0, "only one sheet");
+
+    let _ = app.update(Message::ConfirmationAnswered(
+        Confirmation::RemoveProject(id),
+        false,
+    ));
+    assert_eq!(app.projects.len(), 1);
+    assert_eq!(Store::open_path(config).unwrap().1, original);
+    assert_eq!(
+        app.selection,
+        Some(Selection {
+            project: id,
+            worktree: Some(linked),
+        })
+    );
+    assert!(matches!(app.console, ConsoleState::Connecting(3)));
+    assert!(
+        app.update(request).units() > 0,
+        "can ask again after canceling"
+    );
+}
+
+#[test]
+fn confirming_removal_only_unbookmarks_the_project_and_detaches_its_terminal() {
+    let (tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    let checkout = git::discover(&root).unwrap();
+    let config = tmp.path().join("config/projects.json");
     let other = tmp.path().join("other repo");
     std::fs::create_dir(&other).unwrap();
     run_git(&other, &["init", "-q"]);
@@ -416,8 +458,24 @@ fn forgetting_the_selected_project_detaches_and_selects_the_next() {
     app.console = ConsoleState::Connecting(3);
     assert!(app.selected_pull_request().is_some());
 
-    let _ = app.update(Message::Forget(id));
+    let request = app.update(Message::MenuAction(
+        Selection {
+            project: id,
+            worktree: None,
+        },
+        MenuAction::RemoveProject,
+    ));
+    assert!(request.units() > 0);
+    let _ = app.update(Message::ConfirmationAnswered(
+        Confirmation::RemoveProject(id),
+        true,
+    ));
     assert_eq!(app.projects.len(), 1);
+    assert_eq!(
+        Store::open_path(config).unwrap().1,
+        [app.projects[0].bookmark()]
+    );
+    assert_eq!(git::inventory(&checkout).unwrap().len(), 2);
     assert_eq!(
         app.selection,
         Some(Selection {
@@ -618,10 +676,11 @@ fn row_menu_mirrors_the_header_actions() {
             MenuAction::Directory(VsCode),
             MenuAction::Directory(CopyPath),
             MenuAction::ReplaceAnchor,
-            MenuAction::ForgetProject,
+            MenuAction::RemoveProject,
         ]
     );
     assert_eq!(MenuAction::RenameWorktree.to_string(), "Rename Worktree");
+    assert_eq!(MenuAction::RemoveProject.to_string(), "Remove Project");
 }
 
 #[test]
@@ -646,11 +705,8 @@ fn deduplicates_linked_checkouts_and_persists_anchor_replacement() {
         app.bookmark(PickMode::Replace(id), main.clone()).unwrap(),
         id
     );
-    let (mut restarted, _) = App::from_bookmarks(Store::open_path(config.clone()));
+    let (restarted, _) = App::from_bookmarks(Store::open_path(config));
     assert_eq!(restarted.projects[0].checkout, main);
-    restarted.forget(restarted.projects[0].id).unwrap();
-    assert!(Store::open_path(config).unwrap().1.is_empty());
-    assert!(git::inventory(&main).is_ok());
 }
 #[test]
 fn theme_edits_preview_live_and_cancel_restores_the_saved_theme() {
