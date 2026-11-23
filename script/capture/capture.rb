@@ -6,7 +6,10 @@
 # (.github/workflows/screenshots.yml) runs it; it also works locally:
 #
 #   cargo build --locked --features capture
-#   ruby script/capture/capture.rb [--bin PATH] [--out DIR] [--only NAME]
+#   ruby script/capture/capture.rb [--bin PATH] [--out DIR] [--only NAME,...]
+#
+# The states are listed in states.rb. The workflow passes --only with the
+# states that show the PR's changed files (select.rb).
 #
 # Isolation: the app runs with HOME pointed at a scratch directory (bookmarks,
 # Alacritty, zsh, vim and git config all come from script/capture/home), and
@@ -20,6 +23,7 @@ require "json"
 require "open3"
 require "optparse"
 require "timeout"
+require_relative "states"
 
 HERE = File.expand_path(__dir__)
 REPO = File.expand_path("../..", HERE)
@@ -42,7 +46,7 @@ OptionParser.new do |opts|
   opts.on("--bin PATH", "App binary built with --features capture") { |v| options[:bin] = File.expand_path(v) }
   opts.on("--out DIR", "Where to write the PNGs") { |v| options[:out] = File.expand_path(v) }
   opts.on("--root DIR", "Scratch directory for fixtures (recreated)") { |v| options[:root] = v }
-  opts.on("--only NAME", "Capture one state, e.g. 02-review") { |v| options[:only] = v }
+  opts.on("--only NAMES", Array, "Capture only these states, e.g. 02-review,04-settings") { |v| options[:only] = v }
 end.parse!
 
 def log(message)
@@ -293,56 +297,7 @@ class Tmux
   end
 end
 
-# --- States ----------------------------------------------------------------
-
-GIT_LOG = "git lg"
-
-# Each state opens one worktree and lays out its tmux window. Keep these few
-# and representative: they are the reviewer's view of a UI change.
-def states(fixtures)
-  [
-    {
-      name: "01-workspace",
-      title: "Workspace — sidebar with PR badges, vim and shell splits",
-      project: 0, worktree: fixtures.path("acme-api-session-tokens"), size: "1120x720",
-      layout: lambda do |tmux, pane|
-        right = tmux.split(pane, "-h", 42)
-        bottom = tmux.split(right, "-v", 55)
-        tmux.type(right, GIT_LOG)
-        tmux.type(bottom, "git status --short && cargo test")
-        tmux.type(pane, "vim src/auth/tokens.rs")
-        tmux.wait_for_text(bottom, "test result")
-        tmux.wait_for_text(pane, "pub struct Token")
-      end
-    },
-    {
-      name: "02-review",
-      title: "Review — vim diff over shell panes",
-      project: 1, worktree: fixtures.path("design-system-color-tokens"), size: "1120x720",
-      layout: lambda do |tmux, pane|
-        bottom = tmux.split(pane, "-v", 34)
-        right = tmux.split(bottom, "-h", 50)
-        tmux.type(bottom, "git status -sb && git diff --stat main")
-        tmux.type(right, "git branch -vv")
-        tmux.type(pane, "vim -d src/tokens/light.ts src/tokens/dark.ts")
-        tmux.wait_for_text(right, "chore/drop-ie11")
-        tmux.wait_for_text(pane, "export const")
-      end
-    },
-    {
-      name: "03-compact",
-      title: "Minimum window (820×440) — vim beside a colored diff",
-      project: 0, worktree: fixtures.path("acme-api-rate-limiter"), size: "820x440",
-      layout: lambda do |tmux, pane|
-        right = tmux.split(pane, "-h", 50)
-        tmux.type(right, "git diff")
-        tmux.type(pane, "vim +12 src/limits.rs")
-        tmux.wait_for_text(right, "@@")
-        tmux.wait_for_text(pane, "struct TokenBucket")
-      end
-    }
-  ]
-end
+# --- Capture ---------------------------------------------------------------
 
 def window_id(pid)
   wait_for("the app window", seconds: 60) do
@@ -351,19 +306,23 @@ def window_id(pid)
   end
 end
 
-def capture_state(state, app_env, bin, tmux, out)
+def capture_state(state, fixtures, app_env, bin, tmux, out)
   log "#{state[:name]}: #{state[:title]}"
-  env = app_env.merge(
-    "WORKTREE_BROWSER_CAPTURE_PROJECT" => state[:project].to_s,
-    "WORKTREE_BROWSER_CAPTURE_WORKTREE" => state[:worktree],
-    "WORKTREE_BROWSER_CAPTURE_SIZE" => state[:size]
-  )
+  env = app_env.merge("WORKTREE_BROWSER_CAPTURE_SIZE" => state[:size])
+  if state[:worktree]
+    env["WORKTREE_BROWSER_CAPTURE_PROJECT"] = state[:project].to_s
+    env["WORKTREE_BROWSER_CAPTURE_WORKTREE"] = fixtures.path(state[:worktree])
+  end
+  env["WORKTREE_BROWSER_CAPTURE_OPEN"] = state[:open] if state[:open]
   pid = Process.spawn(env, bin, out: File::NULL, err: File.join(out, "#{state[:name]}.log"))
   begin
     id = window_id(pid)
-    pane = tmux.first_pane
-    state[:layout].call(tmux, pane)
-    tmux.redraw_clients if REFRESH
+    # States without a layout show no terminal, so there is no tmux to wait for.
+    if state[:layout]
+      pane = tmux.first_pane
+      state[:layout].call(tmux, pane)
+      tmux.redraw_clients if REFRESH
+    end
     sleep SETTLE # Let the app draw the last tmux frame.
     file = File.join(out, "#{state[:name]}.png")
     run("screencapture", "-x", "-o", "-l#{id}", file)
@@ -411,9 +370,10 @@ app_env = {
   "GIT_DIR" => nil, "GIT_WORK_TREE" => nil, "GIT_CONFIG_NOSYSTEM" => "1"
 }
 
-selected = states(fixtures).select { |s| options[:only].nil? || s[:name] == options[:only] }
-abort "No state named #{options[:only]}" if selected.empty?
-selected.each { |state| capture_state(state, app_env, options[:bin], tmux, options[:out]) }
+selected = CaptureStates::STATES.select { |s| options[:only].nil? || options[:only].include?(s[:name]) }
+unknown = Array(options[:only]) - selected.map { |s| s[:name] }
+abort "No state named #{unknown.join(', ')}" unless unknown.empty?
+selected.each { |state| capture_state(state, fixtures, app_env, options[:bin], tmux, options[:out]) }
 
 File.write(File.join(options[:out], "states.json"),
            JSON.pretty_generate(selected.map { |s| { name: s[:name], title: s[:title], size: s[:size] } }))

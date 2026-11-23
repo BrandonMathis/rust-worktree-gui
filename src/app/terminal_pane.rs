@@ -15,7 +15,7 @@ use crate::terminal::Console;
 use crate::tmux;
 use iced::widget::{button, column, container, row, text, tooltip};
 use iced::{Center, Element, Fill, Task};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The terminal pane's connection. `Connecting` and `Switching` carry the
 /// attempt's id: a `Prepared` or `Switched` result for any other id is stale
@@ -219,6 +219,20 @@ impl App {
             if let Some(console) = self.console.console_mut() {
                 console.rescale(&self.terminal_preferences, scale);
             }
+        }
+    }
+
+    pub(super) fn paste_dropped_path(&mut self, path: &Path) {
+        // File drops arrive as window events. Send only to a settled attachment,
+        // never to a hidden terminal or a client that might still be switching.
+        if !self.picking
+            && self.pending_confirmation.is_none()
+            && self.settings.is_none()
+            && self.creation.is_none()
+            && self.worktree_name_draft.is_none()
+            && let ConsoleState::Attached(console) = &mut self.console
+        {
+            console.paste_path(path);
         }
     }
 

@@ -96,6 +96,10 @@ impl App {
                 self.window_rescaled(scale);
                 Task::none()
             }
+            Message::FileDropped(path) => {
+                self.paste_dropped_path(&path);
+                Task::none()
+            }
             Message::Terminal(event) => {
                 self.terminal_event(event);
                 Task::none()

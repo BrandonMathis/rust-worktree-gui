@@ -27,6 +27,8 @@ Drag the six-dot grip on a project header to reorder the **Projects** list. The 
 
 To add a worktree, hover the project name and choose **⋮ → New Worktree…**. Choose a new branch, base ref, and checkout location, then confirm **Create Worktree**. The default base is `HEAD` of the selected checkout (or the project anchor). The app refreshes the project and opens the new worktree in the terminal. A newly initialized repository needs its first commit before it can have linked worktrees.
 
+Drag images, other files, or folders from Finder into the Worktree Browser window while a terminal is attached. Their paths are pasted into the active tmux pane, quoted when needed and separated by spaces. Dropping never presses Return or uploads the files.
+
 With tmux mouse mode enabled, scroll over a pane to use that pane’s tmux history. Hold **Shift** to bypass tmux mouse handling and scroll the embedded terminal’s own history.
 
 Each session is identified by its repository and canonical worktree path, not its branch name. Renaming a branch keeps its session; moving the checkout to a new path starts a different one. tmux sessions persist while their server is running, not across a reboot. The browser keeps them on a separate tmux socket, but tmux reads your normal configuration (such as `~/.tmux.conf`) when that server starts. After editing the config, reload it without stopping your sessions with `tmux -L worktree-browser source-file ~/.tmux.conf` (substitute your config path if different). Inspect or attach to sessions from another terminal with `tmux -L worktree-browser list-sessions` or `tmux -L worktree-browser attach -t <name>`.
@@ -58,7 +60,7 @@ cargo deny check                                        # advisories, licenses, 
 cargo llvm-cov --locked --ignore-filename-regex vendor/ # app coverage (needs llvm-tools)
 ```
 
-GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Pull requests that touch UI files also get a comment with screenshots of three app states (`.github/workflows/screenshots.yml`). To capture them locally: `cargo build --locked --features capture && ruby script/capture/capture.rb` (PNGs in `target/screenshots`; it uses fixture repos and a private tmux server, never your own). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.
+GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Pull requests that change how the app looks also get a comment with screenshots of the app states that show their changes (`.github/workflows/screenshots.yml`; the states and the files each one shows are in `script/capture/states.rb`). To capture them locally: `cargo build --locked --features capture && ruby script/capture/capture.rb` (PNGs in `target/screenshots`; it uses fixture repos and a private tmux server, never your own). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.
 
 Security checks (daily RustSec audit, dependency review, CodeQL, workflow audit) run in `.github/workflows/security.yml`, and a weekly report flags dependencies that are falling out of date or support. Dependabot proposes minor and major updates only; patch releases arrive only as security fixes. [SECURITY.md](SECURITY.md) explains the policy and how to report a vulnerability.
 

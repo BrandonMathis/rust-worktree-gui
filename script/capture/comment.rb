@@ -21,7 +21,8 @@ states = JSON.parse(File.read(File.join(dir, "states.json")))
 puts MARKER
 puts "### Screenshots"
 puts
-puts "Worktree Browser at #{sha[0, 7]}, with fixture repositories and tmux sessions " \
+puts "Worktree Browser at #{sha[0, 7]}, in the states that show this pull request's changes, " \
+     "with fixture repositories and tmux sessions " \
      "([run](#{run_url}), `script/capture/capture.rb`)."
 states.each do |state|
   puts
