@@ -10,17 +10,17 @@ Rust 1.90.0 is pinned in `.tool-versions` (asdf). Always pass `--locked`.
 
 ```sh
 cargo run --locked                                   # launch the app (needs tmux)
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked                                  # all tests; add a name to filter
+cargo test --locked                                  # all tests, incl. vendor/iced_term; add a name to filter
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
 cargo deny check                                     # advisories, licenses, sources (deny.toml)
-cargo llvm-cov --locked                              # coverage; CI enforces a line-coverage floor
+cargo llvm-cov --locked --ignore-filename-regex vendor/  # app coverage; CI enforces a line-coverage floor
 ruby scripts/dependency_health.rb                    # out-of-date / out-of-support report (network)
 ruby scripts/test/dependency_health_test.rb          # tests for that report
 ```
 
-Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
+`vendor/iced_term` is a workspace member and a default member, so `cargo test`, `cargo clippy` and `cargo llvm-cov` run its tests and lints too; `cargo fmt` needs `--all` to include it. Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
 
 ## Requirements are the spec
 

@@ -48,12 +48,12 @@ The embedded widget still paints text with iced rather than Alacritty’s render
 ## Verify
 
 ```sh
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+cargo test --locked                                     # app and vendored iced_term tests
 cargo doc --locked --no-deps --document-private-items   # with RUSTDOCFLAGS="-D warnings"
 cargo deny check                                        # advisories, licenses, sources
-cargo llvm-cov --locked                                 # coverage (needs llvm-tools)
+cargo llvm-cov --locked --ignore-filename-regex vendor/ # app coverage (needs llvm-tools)
 ```
 
 GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.
