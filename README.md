@@ -31,13 +31,13 @@ Each session is identified by its repository and canonical worktree path, not it
 
 Use **Actions** to open the active tmux pane’s directory in Finder or VS Code, or copy its path. If the pane directory isn’t available, the menu uses the worktree root. The project row’s **⋮** menu uses the saved checkout for these directory actions.
 
-Each sidebar worktree has one icon on its left: an orange **house** for the main checkout, a cyan **branch** for a linked worktree, a red **warning** if it is unavailable, or its pull request state. For GitHub worktrees, the PR icon is **green** for open, **gray** for draft, **red** for closed, and **purple** for merged. Hover a row to see the PR number and status. Click **PR #…** next to **Actions** to open the selected worktree’s PR in your default browser. The app asks GitHub once per project (`gh pr list`) when it loads or refreshes the project, and again when you select a different worktree, then matches PRs to worktrees by branch. PRs from forks are ignored. If a branch has several PRs, an open one wins, then the newest. This uses your existing GitHub CLI login (`brew install gh`, then `gh auth login` if needed). If GitHub is unavailable or no PR is found, no PR badge appears.
+Each sidebar worktree has one icon on its left: an orange **house** for the main checkout, a cyan **branch** for a linked worktree, a red **warning** if it is unavailable, or its pull request state. For GitHub worktrees, the PR icon is **green** for open, **gray** for draft, **red** for closed, and **purple** for merged. Hover a row to see the PR number and status. Click **PR #…** next to **Actions** to open the selected worktree’s PR in your default browser. The app asks GitHub once per project (`gh pr list`) when it loads or refreshes the project, and again when you select a different worktree, then matches PRs to worktrees by branch. PRs from forks are ignored. If a branch has several PRs, an open one wins, then the newest. This uses your existing GitHub CLI login (`brew install gh`, then `gh auth login` if needed). If GitHub is unavailable or no PR is found, no PR badge appears. On the right of a row, a small badge shows its tmux session: a ring while it runs, a cyan dot when it has printed something since you last looked, and a yellow bell when it rang the bell (for example, an agent finished or is waiting for you). Opening the worktree clears it.
 
 The sidebar keeps worktree names on one line; hover a row or the worktree title for details. The sidebar icon hides the list to give the terminal the full width. Hover over the restore icon to preview and use the sidebar without resizing the terminal. Move away to dismiss the preview, or click the icon to pin the sidebar again. Hover a worktree and click **⋮** to use the same commands as its **Actions** menu without switching terminals. Choose **Rename Worktree** in either menu to set a shorter display name. Clear the field to show the branch again. Names are app-only and do not change Git, the folder, or the tmux session.
 
 Click the **gear** at the bottom left of the sidebar to open **Settings**. On the **Theme** page, pick a preset (Dracula, Alucard, or a Dracula Pro variant such as Blade, Buffy, Lincoln, Morbius or Van Helsing), or click a color and drag on the wheel, move the brightness slider, or type a hex code. Changes preview live. **Save & Confirm** keeps them in `~/Library/Application Support/Worktree Browser/theme.json`; **Cancel** or Escape discards them. The theme colors the app itself; the terminal keeps your Alacritty colors.
 
-Project bookmarks and worktree display names are saved in `~/Library/Application Support/Worktree Browser/projects.json`. Click **Refresh** after outside Git changes. In the project row’s **⋮** menu, use **Replace Anchor** if the saved checkout is gone, or **Forget Project** to remove the bookmark without touching Git or stopping its sessions.
+Project bookmarks and worktree display names are saved in `~/Library/Application Support/Worktree Browser/projects.json`. Worktrees added, removed or switched outside the app (including from the embedded terminal) show up within a few seconds and whenever the window gains focus; **Refresh** also re-checks every pull request. In the project row’s **⋮** menu, use **Replace Anchor** if the saved checkout is gone, or **Forget Project** to remove the bookmark without touching Git or stopping its sessions.
 
 ## Terminal preferences
 
@@ -48,12 +48,12 @@ The embedded widget still paints text with iced rather than Alacritty’s render
 ## Verify
 
 ```sh
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+cargo test --locked                                     # app and vendored iced_term tests
 cargo doc --locked --no-deps --document-private-items   # with RUSTDOCFLAGS="-D warnings"
 cargo deny check                                        # advisories, licenses, sources
-cargo llvm-cov --locked                                 # coverage (needs llvm-tools)
+cargo llvm-cov --locked --ignore-filename-regex vendor/ # app coverage (needs llvm-tools)
 ```
 
 GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.

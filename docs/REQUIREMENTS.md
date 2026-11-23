@@ -16,7 +16,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 - If the saved folder goes away, the project is shown as unavailable and you can point it at another checkout of the same repository.
 
 **Worktrees straight from Git**
-- The list of worktrees comes from Git alone. Worktrees created or deleted elsewhere appear or disappear when you click Refresh.
+- The list of worktrees comes from Git alone. Worktrees created, deleted or switched elsewhere, including from the embedded terminal, appear or disappear on their own within a few seconds, and whenever the window gains focus. Refresh also re-checks pull requests.
 - Each worktree shows its branch (or "Detached HEAD"). Missing or prunable worktrees are flagged and can't open a terminal.
 - The app never creates, removes or prunes worktrees.
 
@@ -51,7 +51,7 @@ It was built for two reasons: to have a lightweight "agents workspace" (similar 
 
 - Creating worktrees from the app.
 - Automatically starting a coding agent (you start it in the shell).
-- Packaging as a `.app`, automatic refresh or file watching, and sessions that survive a reboot.
+- Packaging as a `.app`, and sessions that survive a reboot.
 
 ## Requirements and verification
 

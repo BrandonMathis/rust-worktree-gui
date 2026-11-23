@@ -151,6 +151,9 @@ pub fn branch_to_match(tree: &Worktree) -> Option<&str> {
 #[derive(Debug, Default)]
 pub struct Badges {
     by_worktree: BTreeMap<PathBuf, PullRequest>,
+    /// The branch each worktree was on when the last answer was applied, so an
+    /// automatic refresh can tell which worktrees are new or changed branch.
+    checked: BTreeMap<PathBuf, String>,
     request_id: Option<u64>,
 }
 
@@ -168,9 +171,20 @@ impl Badges {
         self.request_id = Some(request_id);
     }
 
+    /// True if a worktree with a branch hasn't been checked on that branch yet.
+    pub fn needs_lookup(&self, worktrees: &[Worktree]) -> bool {
+        worktrees.iter().any(|tree| {
+            branch_to_match(tree).is_some_and(|branch| {
+                self.checked.get(&tree.path).map(String::as_str) != Some(branch)
+            })
+        })
+    }
+
     /// Applies the answer to lookup `request_id`, matched against the worktrees listed
     /// now (they may have changed since the lookup started). An answer to an older or
-    /// cancelled lookup is ignored. `None` (no usable answer from `gh`) clears the badges.
+    /// cancelled lookup is ignored. `None` (no usable answer from `gh`) clears the
+    /// badges; the worktrees still count as checked, so automatic refreshes don't
+    /// retry a missing or logged-out `gh` (a manual Refresh does).
     pub fn finish(
         &mut self,
         request_id: u64,
@@ -182,23 +196,33 @@ impl Badges {
         }
         self.request_id = None;
         let prs = prs.unwrap_or_default();
-        self.by_worktree = worktrees
-            .iter()
-            .filter_map(|tree| {
-                let pr = best_for_branch(&prs, branch_to_match(tree)?)?;
+        let listed = || {
+            worktrees
+                .iter()
+                .filter_map(|tree| Some((tree, branch_to_match(tree)?)))
+        };
+        self.by_worktree = listed()
+            .filter_map(|(tree, branch)| {
+                let pr = best_for_branch(&prs, branch)?;
                 Some((tree.path.clone(), pr.clone()))
             })
+            .collect();
+        self.checked = listed()
+            .map(|(tree, branch)| (tree.path.clone(), branch.to_owned()))
             .collect();
     }
 
     /// Keeps each badge while its worktree is still listed on the same branch, so a
     /// refresh doesn't make every badge flicker. Drops the rest.
     pub fn retain_listed(&mut self, worktrees: &[Worktree]) {
-        self.by_worktree.retain(|path, pr| {
+        let on_branch = |path: &Path, branch: &str| {
             worktrees
                 .iter()
-                .any(|tree| tree.path == *path && branch_to_match(tree) == Some(pr.head.as_str()))
-        });
+                .any(|tree| tree.path == path && branch_to_match(tree) == Some(branch))
+        };
+        self.by_worktree
+            .retain(|path, pr| on_branch(path, &pr.head));
+        self.checked.retain(|path, branch| on_branch(path, branch));
     }
 
     /// Drops every badge and ignores the lookup in flight (for example after

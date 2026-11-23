@@ -15,6 +15,7 @@ mod terminal;
 mod terminal_config;
 mod theme;
 mod tmux;
+mod watch;
 
 #[cfg(test)]
 #[path = "../tests/git_fixtures.rs"]

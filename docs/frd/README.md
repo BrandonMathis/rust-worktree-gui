@@ -34,9 +34,9 @@ This index deliberately has no per-area requirement counts. Keeping totals here 
 ## How to verify
 
 ```sh
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+cargo test --locked   # includes the vendored iced_term tests
 ```
 
 Tests that need tmux (`migrates_tmux_session_in_place_and_preserves_a_conflicting_session`) skip themselves when tmux isn't installed. They use a private socket and never touch the user's `worktree-browser` server.

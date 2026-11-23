@@ -139,6 +139,11 @@ pub struct Backend {
     notifier: Notifier,
     last_content: RenderableContent,
     pub(crate) url_regex: RegexSearch,
+    // Patch: the PTY's child process id. Worktree Browser runs a tmux client
+    // there and finds it by pid to `switch-client` it to another session
+    // instead of starting a new terminal.
+    #[cfg(unix)]
+    pub(crate) child_pid: u32,
 }
 
 impl Backend {
@@ -157,6 +162,8 @@ impl Backend {
         let config = term::Config::default();
         let terminal_size = TerminalSize::default();
         let pty = tty::new(&pty_config, terminal_size.into(), id)?;
+        #[cfg(unix)]
+        let child_pid = pty.child().id();
 
         let event_proxy = EventProxy(pty_event_proxy_sender);
 
@@ -188,6 +195,8 @@ impl Backend {
             notifier,
             last_content: initial_content,
             url_regex: RegexSearch::new(URL_REGEX).expect("invalid url regexp"),
+            #[cfg(unix)]
+            child_pid,
         })
     }
 
