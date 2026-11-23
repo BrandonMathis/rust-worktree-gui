@@ -5,7 +5,7 @@
 use super::{App, Message, PickMode, ProjectId, background};
 use crate::create::{self, ProjectChoice};
 use crate::git::{self, Checkout};
-use crate::style::{self, Button, Panel};
+use crate::style::{self, Button, Corners, Panel};
 use iced::widget::{button, column, container, operation, row, scrollable, text, text_input};
 use iced::{Center, Element, Fill, Task};
 use std::path::{Path, PathBuf};
@@ -184,7 +184,11 @@ impl App {
         self.notice = Some(error);
     }
 
-    pub(super) fn creation_form<'a>(&'a self, draft: &'a create::Draft) -> Element<'a, Message> {
+    pub(super) fn creation_form<'a>(
+        &'a self,
+        draft: &'a create::Draft,
+        corners: Corners,
+    ) -> Element<'a, Message> {
         let p = self.palette();
         let worktree = matches!(draft.kind, create::Kind::Worktree { .. });
         let title = if worktree {
@@ -302,7 +306,7 @@ impl App {
         ))
         .width(Fill)
         .height(Fill)
-        .style(style::panel(p, Panel::Glass))
+        .style(style::panel_in(p, Panel::Glass, corners))
         .into()
     }
 }

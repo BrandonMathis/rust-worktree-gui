@@ -6,7 +6,7 @@
 //! `app::Message::Settings(..)` here and only acts on the returned `Outcome`,
 //! the way a React parent passes `onCancel` / `onSave` callbacks.
 
-use crate::style::{self, Button, Panel};
+use crate::style::{self, Button, Corners, Panel};
 use crate::theme::{self, Hsv, Palette, Preset, Slot};
 use crate::{color_wheel, icons};
 use iced::widget::{
@@ -131,7 +131,8 @@ impl Draft {
         self.hex[self.selected as usize] = theme::to_hex(color);
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    /// `corners` rounds the panels that sit in the window's bottom corners.
+    pub fn view(&self, corners: Corners) -> Element<'_, Message> {
         let p = self.palette;
         let pages = Page::ALL.map(|page| {
             button(
@@ -180,7 +181,7 @@ impl Draft {
         .padding(6)
         .width(180)
         .height(Fill)
-        .style(style::panel(p, Panel::Glass));
+        .style(style::panel_in(p, Panel::Glass, corners.left()));
 
         let page = match self.page {
             Page::Theme => self.theme_page(),
@@ -199,7 +200,7 @@ impl Draft {
             .padding(14)
             .width(Fill)
             .height(Fill)
-            .style(style::panel(p, Panel::Glass));
+            .style(style::panel_in(p, Panel::Glass, corners.right()));
         row![sidebar, main].spacing(4).height(Fill).into()
     }
 

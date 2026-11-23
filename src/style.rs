@@ -36,6 +36,91 @@ pub enum Button {
     Selected,
 }
 
+/// The corner radius of panels, buttons and menus.
+const RADIUS: f32 = 3.0;
+
+/// Space between the window edge and its panels (the padding in `App::view`).
+pub const WINDOW_GAP: f32 = 4.0;
+
+/// Rounding for a panel's two bottom corners.
+///
+/// Panels that sit in a bottom corner of the window take the window's own
+/// radius minus [`WINDOW_GAP`], so their curve runs parallel to the macOS
+/// window corner instead of a tight 3px curve inside a wide one. The value is
+/// handed down through the view functions, like a prop, so each panel knows
+/// where it sits.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Corners {
+    bottom_left: f32,
+    bottom_right: f32,
+}
+
+impl Corners {
+    /// A panel away from the window corners.
+    pub const NONE: Self = Self {
+        bottom_left: RADIUS,
+        bottom_right: RADIUS,
+    };
+
+    /// Both bottom corners of a window whose own corners have `window_radius`.
+    pub fn window(window_radius: f32) -> Self {
+        let radius = (window_radius - WINDOW_GAP).max(RADIUS);
+        Self {
+            bottom_left: radius,
+            bottom_right: radius,
+        }
+    }
+
+    /// The share of these corners for the leftmost panel in a row.
+    pub fn left(self) -> Self {
+        Self {
+            bottom_right: RADIUS,
+            ..self
+        }
+    }
+
+    /// The share of these corners for the rightmost panel in a row.
+    pub fn right(self) -> Self {
+        Self {
+            bottom_left: RADIUS,
+            ..self
+        }
+    }
+
+    fn radius(self) -> iced::border::Radius {
+        iced::border::Radius::new(RADIUS)
+            .bottom_left(self.bottom_left)
+            .bottom_right(self.bottom_right)
+    }
+}
+
+/// The corner radius macOS draws on a titled window, in points.
+///
+/// AppKit reports 16 on macOS 26 (Tahoe) and 10 on earlier releases, but has
+/// no public API for it, so this reads the OS version. Other platforms return
+/// 0, which leaves every panel at the plain 3px rounding.
+pub fn window_radius() -> f32 {
+    if !cfg!(target_os = "macos") {
+        return 0.0;
+    }
+    std::fs::read_to_string("/System/Library/CoreServices/SystemVersion.plist")
+        .ok()
+        .and_then(|plist| macos_major_version(&plist))
+        .map_or(16.0, macos_window_radius)
+}
+
+fn macos_window_radius(major_version: u32) -> f32 {
+    if major_version >= 26 { 16.0 } else { 10.0 }
+}
+
+/// The major version from `SystemVersion.plist`, e.g. 26 for `26.6.2`.
+fn macos_major_version(plist: &str) -> Option<u32> {
+    let (_, after_key) = plist.split_once("<key>ProductVersion</key>")?;
+    let (_, value) = after_key.split_once("<string>")?;
+    let (version, _) = value.split_once("</string>")?;
+    version.trim().split('.').next()?.parse().ok()
+}
+
 pub fn application(p: Palette) -> theme::Style {
     theme::Style {
         background_color: p.window(),
@@ -44,7 +129,20 @@ pub fn application(p: Palette) -> theme::Style {
 }
 
 pub fn panel(p: Palette, kind: Panel) -> impl Fn(&Theme) -> container::Style {
-    move |_| match kind {
+    panel_in(p, kind, Corners::NONE)
+}
+
+/// A panel that may sit in a bottom corner of the window. See [`Corners`].
+pub fn panel_in(p: Palette, kind: Panel, corners: Corners) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        let mut style = panel_style(p, kind);
+        style.border.radius = corners.radius();
+        style
+    }
+}
+
+fn panel_style(p: Palette, kind: Panel) -> container::Style {
+    match kind {
         Panel::Glass => {
             let (top, bottom) = p.glass();
             container::Style {
@@ -183,7 +281,7 @@ fn border(color: Color, width: f32) -> Border {
     Border {
         color,
         width,
-        radius: 3.0.into(),
+        radius: RADIUS.into(),
     }
 }
 
@@ -216,6 +314,41 @@ mod tests {
             panel(p, Panel::Console)(&theme).background,
             Some(Color::from_rgb8(40, 42, 54).into())
         );
+    }
+
+    #[test]
+    fn panels_in_the_bottom_window_corners_run_parallel_to_the_window_curve() {
+        let p = Palette::default();
+        let theme = p.iced_theme();
+        let radius = |corners| panel_in(p, Panel::Console, corners)(&theme).border.radius;
+        // A 16pt macOS window corner, less the 4px gap: 12px bottom corners.
+        let window = Corners::window(16.0);
+        let both = radius(window);
+        assert_eq!((both.top_left, both.top_right), (3.0, 3.0));
+        assert_eq!((both.bottom_left, both.bottom_right), (12.0, 12.0));
+        // Side-by-side panels each take only their own corner.
+        let left = radius(window.left());
+        assert_eq!((left.bottom_left, left.bottom_right), (12.0, 3.0));
+        let right = radius(window.right());
+        assert_eq!((right.bottom_left, right.bottom_right), (3.0, 12.0));
+        // Square-cornered windows (other platforms) keep the 3px rounding.
+        assert_eq!(radius(Corners::window(0.0)), 3.0.into());
+    }
+
+    #[test]
+    fn macos_26_and_later_windows_have_wider_corners_than_earlier_releases() {
+        let plist = |version: &str| {
+            format!(
+                "<dict>\n\t<key>ProductName</key>\n\t<string>macOS</string>\n\t\
+                 <key>ProductVersion</key>\n\t<string>{version}</string>\n</dict>"
+            )
+        };
+        assert_eq!(macos_major_version(&plist("26.6.2")), Some(26));
+        assert_eq!(macos_major_version(&plist("15.5")), Some(15));
+        assert_eq!(macos_major_version("<dict></dict>"), None);
+        assert_eq!(macos_window_radius(26), 16.0);
+        assert_eq!(macos_window_radius(27), 16.0);
+        assert_eq!(macos_window_radius(15), 10.0);
     }
 
     #[test]

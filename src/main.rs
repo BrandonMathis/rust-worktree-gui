@@ -29,8 +29,9 @@ fn main() -> iced::Result {
     let font = preferences
         .as_ref()
         .map_or(iced::Font::DEFAULT, |p| p.font.font_type);
+    let window_radius = style::window_radius();
     iced::application(
-        move || app::App::new(preferences.clone()),
+        move || app::App::new(preferences.clone(), window_radius),
         app::App::update,
         app::App::view,
     )

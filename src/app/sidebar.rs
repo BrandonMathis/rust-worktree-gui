@@ -5,7 +5,7 @@ use super::widgets::{icon_button, settings_button, single_line, with_row_menu};
 use super::{App, Message, Project, Selection};
 use crate::create::ProjectChoice;
 use crate::git::Worktree;
-use crate::style::{self, Button, Panel};
+use crate::style::{self, Button, Corners, Panel};
 use crate::theme::Palette;
 use crate::{icons, pull_request, row_menu};
 use iced::widget::{
@@ -168,7 +168,7 @@ impl App {
         }
     }
 
-    pub(super) fn sidebar(&self) -> Element<'_, Message> {
+    pub(super) fn sidebar(&self, corners: Corners) -> Element<'_, Message> {
         let p = self.palette();
         let refreshing = self.projects.iter().any(|p| p.refresh_id.is_some());
         let project_menu = if self.can_start_creation() {
@@ -362,11 +362,15 @@ impl App {
         .padding(6)
         .width(202)
         .height(Fill)
-        .style(if self.sidebar_visible {
-            style::panel(p, Panel::Glass)
-        } else {
-            style::panel(p, Panel::Floating)
-        })
+        .style(style::panel_in(
+            p,
+            if self.sidebar_visible {
+                Panel::Glass
+            } else {
+                Panel::Floating
+            },
+            corners,
+        ))
         .into()
     }
 
