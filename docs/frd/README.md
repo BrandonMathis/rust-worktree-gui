@@ -2,8 +2,6 @@
 
 These documents define what Worktree Browser must do. They were derived from the Pi coding sessions that built the prototype (`~/.pi/agent/sessions/--Users-brandonmathis-Dev-rust-worktree-gui--/`, 2026-11-20), cross-checked against the code, `PLAN.md` and `README.md`.
 
-For a short, non-technical overview, read [../REQUIREMENTS.md](../REQUIREMENTS.md).
-
 ## Documents
 
 | Doc | Area | IDs |

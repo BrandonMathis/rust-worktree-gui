@@ -3,17 +3,20 @@
 
 use super::pull_requests::Lookup;
 use super::{
-    App, MenuAction, Message, PickMode, RenameDraft, Selection, WORKTREE_NAME_INPUT, background,
+    App, Confirmation, MenuAction, Message, PickMode, ProjectId, RenameDraft, Selection,
+    WORKTREE_NAME_INPUT, background,
 };
-use crate::{git, quit, settings};
-use iced::Task;
+use crate::{confirmation, git, settings};
 use iced::widget::operation;
+use iced::{Task, window};
 
 impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::QuitRequested(id) => self.quit_requested(id),
-            Message::QuitAnswered(confirmed) => self.quit_answered(confirmed),
+            Message::ConfirmationAnswered(action, confirmed) => {
+                self.confirmation_answered(action, confirmed)
+            }
             Message::Pick(mode) => self.pick(mode),
             Message::FolderPicked(mode, path) => self.folder_picked(mode, path),
             Message::Discovered(mode, result) => {
@@ -97,12 +100,6 @@ impl App {
                 self.terminal_event(event);
                 Task::none()
             }
-            Message::Forget(id) => {
-                if let Err(error) = self.forget(id) {
-                    self.notice = Some(error);
-                }
-                Task::none()
-            }
             Message::MenuAction(target, action) => self.menu_action(target, action),
             Message::EditWorktreeName(name) => {
                 if let Some(draft) = &mut self.worktree_name_draft {
@@ -137,27 +134,56 @@ impl App {
         }
     }
 
-    fn quit_requested(&mut self, id: iced::window::Id) -> Task<Message> {
-        if self.quit_pending || self.picking {
+    fn quit_requested(&mut self, id: window::Id) -> Task<Message> {
+        if self.pending_confirmation.is_some() || self.picking {
             return Task::none();
         }
-        self.quit_pending = true;
-        quit::confirm(id).map(Message::QuitAnswered)
+        self.pending_confirmation = Some(Confirmation::Quit);
+        confirmation::show(
+            id,
+            "Quit Worktree Browser?",
+            "Your tmux sessions will keep running.".into(),
+            "Quit",
+        )
+        .map(|confirmed| Message::ConfirmationAnswered(Confirmation::Quit, confirmed))
     }
 
-    fn quit_answered(&mut self, confirmed: bool) -> Task<Message> {
-        if !self.quit_pending {
+    fn request_project_removal(&mut self, id: ProjectId, name: String) -> Task<Message> {
+        let action = Confirmation::RemoveProject(id);
+        self.pending_confirmation = Some(action);
+        window::latest()
+            .then(move |id| match id {
+                Some(id) => confirmation::show(
+                    id,
+                    "Remove Project?",
+                    format!("Remove “{name}” from Worktree Browser? Repository files, worktrees, and tmux sessions will be left unchanged."),
+                    "Remove Project",
+                ),
+                None => Task::done(false),
+            })
+            .map(move |confirmed| Message::ConfirmationAnswered(action, confirmed))
+    }
+
+    fn confirmation_answered(&mut self, action: Confirmation, confirmed: bool) -> Task<Message> {
+        if self.pending_confirmation != Some(action) {
             return Task::none();
         }
-        self.quit_pending = false;
+        self.pending_confirmation = None;
         if confirmed {
-            return iced::exit();
+            match action {
+                Confirmation::Quit => return iced::exit(),
+                Confirmation::RemoveProject(id) => {
+                    if let Err(error) = self.remove_bookmark(id) {
+                        self.notice = Some(error);
+                    }
+                }
+            }
         }
         self.focus_terminal()
     }
 
     fn pick(&mut self, mode: PickMode) -> Task<Message> {
-        if self.picking || self.store.is_none() {
+        if self.picking || self.pending_confirmation.is_some() || self.store.is_none() {
             return Task::none();
         }
         self.picking = true;
@@ -211,19 +237,23 @@ impl App {
                 }
                 Task::none()
             }
-            MenuAction::NewWorktree | MenuAction::ReplaceAnchor | MenuAction::ForgetProject => {
-                if !(self.can_start_creation()
-                    && target.worktree.is_none()
-                    && self.resolve_action_target(&target).is_some())
-                {
+            MenuAction::NewWorktree | MenuAction::ReplaceAnchor | MenuAction::RemoveProject => {
+                if !self.can_start_creation() {
                     return Task::none();
                 }
-                let message = match action {
-                    MenuAction::ReplaceAnchor => Message::Pick(PickMode::Replace(target.project)),
-                    MenuAction::ForgetProject => Message::Forget(target.project),
-                    _ => Message::NewWorktree(target.project),
+                let Some((project, None)) = self.resolve_action_target(&target) else {
+                    return Task::none();
                 };
-                self.update(message)
+                match action {
+                    MenuAction::ReplaceAnchor => {
+                        self.update(Message::Pick(PickMode::Replace(target.project)))
+                    }
+                    MenuAction::RemoveProject => {
+                        let name = project.name().replace(['\n', '\r'], " ");
+                        self.request_project_removal(target.project, name)
+                    }
+                    _ => self.update(Message::NewWorktree(target.project)),
+                }
             }
             MenuAction::Directory(action) => {
                 let Some((project, tree)) = self.resolve_action_target(&target) else {
@@ -296,7 +326,7 @@ fn window_opened(id: iced::window::Id) -> Task<Message> {
     #[cfg(target_os = "macos")]
     return Task::batch([
         scale,
-        iced::window::run(id, quit::install_shortcut).discard(),
+        iced::window::run(id, crate::quit::install_shortcut).discard(),
     ]);
     #[cfg(not(target_os = "macos"))]
     return scale;

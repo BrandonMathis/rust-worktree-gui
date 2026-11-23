@@ -19,7 +19,7 @@ pub(super) fn menu_actions(worktree: bool) -> Vec<MenuAction> {
     if worktree {
         actions.push(MenuAction::RenameWorktree);
     } else {
-        actions.extend([MenuAction::ReplaceAnchor, MenuAction::ForgetProject]);
+        actions.extend([MenuAction::ReplaceAnchor, MenuAction::RemoveProject]);
     }
     actions
 }

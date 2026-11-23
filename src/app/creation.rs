@@ -15,7 +15,10 @@ const CREATE_BRANCH_INPUT: &str = "create-branch-input";
 
 impl App {
     pub(super) fn can_start_creation(&self) -> bool {
-        self.store.is_some() && !self.picking && self.creation.is_none()
+        self.store.is_some()
+            && !self.picking
+            && self.creation.is_none()
+            && self.pending_confirmation.is_none()
     }
 
     pub(super) fn project_choice(&mut self, choice: ProjectChoice) -> Task<Message> {

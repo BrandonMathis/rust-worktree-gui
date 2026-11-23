@@ -39,7 +39,7 @@ The sidebar keeps worktree names on one line; hover a row or the worktree title 
 
 Click the **gear** at the bottom left of the sidebar to open **Settings**. On the **Theme** page, pick a preset (Dracula, Alucard, or a Dracula Pro variant such as Blade, Buffy, Lincoln, Morbius or Van Helsing), or click a color and drag on the wheel, move the brightness slider, or type a hex code. Changes preview live. **Save & Confirm** keeps them in `~/Library/Application Support/Worktree Browser/theme.json`; **Cancel**, Escape or clicking the gear again discards them. The theme colors the app itself; the terminal keeps your Alacritty colors.
 
-Project bookmarks and worktree display names are saved in `~/Library/Application Support/Worktree Browser/projects.json`. Worktrees added, removed or switched outside the app (including from the embedded terminal) show up within a few seconds and whenever the window gains focus; **Refresh** also re-checks every pull request. In the project row’s **⋮** menu, use **Replace Anchor** if the saved checkout is gone, or **Forget Project** to remove the bookmark without touching Git or stopping its sessions.
+Project bookmarks and worktree display names are saved in `~/Library/Application Support/Worktree Browser/projects.json`. Worktrees added, removed or switched outside the app (including from the embedded terminal) show up within a few seconds and whenever the window gains focus; **Refresh** also re-checks every pull request. In the project row’s **⋮** menu, use **Replace Anchor** if the saved checkout is gone, or **Remove Project** to confirm removing the bookmark without touching Git, worktree files, or running tmux sessions.
 
 ## Terminal preferences
 

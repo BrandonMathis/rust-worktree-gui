@@ -102,7 +102,7 @@ pub struct App {
     window_scale: f32,
     /// Rounding for panels in the window's bottom corners (macOS only).
     window_corners: Corners,
-    quit_pending: bool,
+    pending_confirmation: Option<Confirmation>,
     sidebar_visible: bool,
     sidebar_preview: SidebarPreview,
     picking: bool,
@@ -150,6 +150,12 @@ struct RenameDraft {
     input: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Confirmation {
+    Quit,
+    RemoveProject(ProjectId),
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Pick(PickMode),
@@ -194,8 +200,7 @@ pub enum Message {
     WindowOpened(iced::window::Id),
     WindowScale(f32),
     QuitRequested(iced::window::Id),
-    QuitAnswered(bool),
-    Forget(ProjectId),
+    ConfirmationAnswered(Confirmation, bool),
     MenuAction(Selection, MenuAction),
     EditWorktreeName(String),
     SaveWorktreeName,
@@ -212,7 +217,7 @@ pub enum MenuAction {
     RenameWorktree,
     NewWorktree,
     ReplaceAnchor,
-    ForgetProject,
+    RemoveProject,
 }
 
 impl std::fmt::Display for MenuAction {
@@ -222,7 +227,7 @@ impl std::fmt::Display for MenuAction {
             Self::RenameWorktree => f.write_str("Rename Worktree"),
             Self::NewWorktree => f.write_str("New Worktree…"),
             Self::ReplaceAnchor => f.write_str("Replace Anchor…"),
-            Self::ForgetProject => f.write_str("Forget Project"),
+            Self::RemoveProject => f.write_str("Remove Project"),
         }
     }
 }
@@ -292,7 +297,7 @@ impl App {
             terminal_preferences: Preferences::default(),
             window_scale: 1.0,
             window_corners: Corners::NONE,
-            quit_pending: false,
+            pending_confirmation: None,
             sidebar_visible: true,
             sidebar_preview: SidebarPreview::default(),
             picking: false,
