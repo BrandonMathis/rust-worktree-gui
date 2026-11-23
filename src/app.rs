@@ -215,10 +215,7 @@ impl Project {
     }
 
     fn name(&self) -> std::borrow::Cow<'_, str> {
-        let path = self.checkout.root.as_path();
-        path.file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy()
+        self.checkout.repository_name().to_string_lossy()
     }
 
     fn worktrees(&self) -> &[Worktree] {

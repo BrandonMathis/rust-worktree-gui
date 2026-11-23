@@ -1,5 +1,5 @@
 use std::ffi::{OsStr, OsString};
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -15,6 +15,36 @@ const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(300);
 pub struct Checkout {
     pub root: PathBuf,
     pub common_dir: PathBuf,
+}
+
+impl Checkout {
+    /// The repository's name, taken from its common Git directory rather than from
+    /// the anchor checkout, so a project added from (or re-anchored to) a linked
+    /// worktree such as `feature-x` is still labeled after the repository.
+    ///
+    /// - `…/repo/.git` (a normal repository) is named `repo`. Any hidden folder is
+    ///   treated the same way, so a bare repository kept as `…/project/.bare` beside
+    ///   its worktrees is named `project`.
+    /// - `…/repo.git` or `…/repo` (a bare repository) is named `repo`.
+    ///
+    /// It returns an `OsStr` borrowed from the path; convert it lossily only to display it.
+    pub fn repository_name(&self) -> &OsStr {
+        let common = &self.common_dir;
+        let folder = match common.file_name() {
+            Some(name) if name.as_bytes().starts_with(b".") => {
+                common.parent().and_then(Path::file_name)
+            }
+            name => name,
+        };
+        // Fall back to the checkout's folder for odd layouts such as a common dir at `/`.
+        let name = folder
+            .or_else(|| self.root.file_name())
+            .unwrap_or(self.root.as_os_str());
+        match name.as_bytes().strip_suffix(b".git") {
+            Some(stem) if !stem.is_empty() => OsStr::from_bytes(stem),
+            _ => name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,7 +295,6 @@ fn parse_worktrees(output: &[u8]) -> Result<Vec<Worktree>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::ffi::OsStrExt;
 
     #[test]
     fn a_hung_git_fails_with_a_readable_error_instead_of_blocking() {
