@@ -93,3 +93,5 @@ Read `SECURITY.md` before changing `.github/dependabot.yml`, `deny.toml` or a wo
 ## Collaboration
 
 Another agent (Pi) may be editing this repository at the same time. Before broad edits, check `git status` and file modification times. Don't revert changes you didn't make, and avoid large refactors of a file someone else is actively changing.
+
+Write pull request descriptions as `.claude/skills/pr-description/SKILL.md` describes: a "What changed" section and a "Why" section, with no test plans or lists of tests added.
