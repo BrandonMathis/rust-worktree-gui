@@ -43,7 +43,7 @@ impl App {
                 Task::none()
             }
             Message::SelectWorktree(id, path) => {
-                // Clicking the selected worktree again must not re-run `gh` (review L4).
+                // Clicking the selected worktree again must not re-run `gh`.
                 let changed = self.selection.as_ref().is_none_or(|selection| {
                     selection.project != id || selection.worktree.as_ref() != Some(&path)
                 });

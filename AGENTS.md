@@ -24,7 +24,7 @@ ruby scripts/test/dependency_health_test.rb          # tests for that report
 
 ## Requirements are the spec
 
-- `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary. `docs/CODE_REVIEW.md` lists known issues and planned refactors.
+- `docs/frd/` holds the functional requirements (IDs such as `PRJ-03` or `TRM-04`). Each requirement names the test that verifies it. `docs/REQUIREMENTS.md` is the human summary.
 - When you add or change behavior, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
 - Don't keep requirement counts or totals in `docs/frd/README.md` or `docs/REQUIREMENTS.md`. Every feature would edit the same lines and cause merge conflicts.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
@@ -64,6 +64,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 
 ## Rules
 
+- **Never commit code review documents.** Review findings, audits and refactor wish lists (for example a `CODE_REVIEW.md`) must not be checked into source control. Keep them out of the repository (in the PR, an issue, or an untracked local file) and record the outcome as FRD rows and tests instead.
 - **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names and the theme palette are the only persisted state.
 - **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Forgetting a project removes only the bookmark.
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; paths may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.
