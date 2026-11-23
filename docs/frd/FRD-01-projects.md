@@ -15,6 +15,7 @@
 | PRJ-07 | Must | If the saved anchor checkout disappears, the project shows as unavailable. **Replace Anchor** accepts only another live checkout of the *same* repository. | `missing_anchor_is_an_error_but_a_live_checkout_can_replace_it`, `replacing_an_anchor_with_another_repository_is_rejected` | Implemented |
 | PRJ-08 | Must | **Forget Project** removes only the bookmark. It doesn't touch Git, files on disk, or running tmux sessions. If the project was selected, its terminal detaches and the first remaining project is selected. | `deduplicates_linked_checkouts_and_persists_anchor_replacement`, `forgetting_the_selected_project_detaches_and_selects_the_next` | Implemented |
 | PRJ-09 | Must | Bookmark writes are atomic (temp file + rename), so a failed save never loses existing bookmarks. Paths that aren’t valid UTF-8 round-trip exactly. | `round_trips_only_bookmarks_and_preserves_unavailable_paths` (round-trip); atomicity: Manual (code review) | Implemented |
+| PRJ-10 | Must | A project is labeled with its repository's name, taken from the common Git directory, not from the anchor checkout. `…/repo/.git` and a hidden `…/repo/.bare` are named `repo`, and a bare `…/repo.git` is named `repo`. Adding the project from a linked worktree, or **Replace Anchor**, doesn't change its label. | `projects_are_named_after_the_repository_not_the_anchor_checkout` | Implemented |
 
 ## Out of scope
 

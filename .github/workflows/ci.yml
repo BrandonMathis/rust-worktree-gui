@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 # Actions are pinned to full commit SHAs; Dependabot keeps them current.
-permissions:
-  contents: read
+# No permissions by default; each job grants only what it needs.
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,8 +26,10 @@ jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -40,8 +42,10 @@ jobs:
     name: Lint
     # The app is macOS-only (AppKit, Core Text), so it builds on macOS.
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -49,28 +53,33 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo clippy --locked --all-targets -- -D warnings
+      # --workspace includes the vendored iced_term (also a default member).
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   docs:
     name: Docs
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo doc --locked --no-deps --document-private-items
+      - run: cargo doc --locked --workspace --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
 
   test:
     name: Test and coverage
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -84,19 +93,21 @@ jobs:
           tool: cargo-llvm-cov@0.9.2
       # tmux-backed tests skip without tmux; install it so they run.
       - run: brew install tmux
-      # Runs the whole test suite once, instrumented, and fails if line
-      # coverage drops below the floor. Raise the floor as coverage grows.
-      - run: cargo llvm-cov --locked --lcov --output-path lcov.info --fail-under-lines 50
+      # Runs every test once, instrumented: the app and the vendored iced_term
+      # (including the NFR-08 performance tests). The floor measures app code
+      # only, so vendored files are left out of the report. Raise the floor as
+      # coverage grows.
+      - run: cargo llvm-cov --locked --workspace --ignore-filename-regex 'vendor/' --lcov --output-path lcov.info --fail-under-lines 50
       - name: Coverage summary
         if: always()
         run: |
           {
             echo '### Coverage'
             echo '```'
-            cargo llvm-cov report --summary-only
+            cargo llvm-cov report --ignore-filename-regex 'vendor/' --summary-only
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coverage-lcov
@@ -106,8 +117,10 @@ jobs:
   deny:
     name: Dependencies
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3

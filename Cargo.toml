@@ -9,7 +9,7 @@ autotests = false
 
 [dependencies]
 directories = "6"
-iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "svg", "crisp", "tokio", "x11", "wayland"] }
+iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "svg", "canvas", "crisp", "tokio", "x11", "wayland"] }
 iced_term = "=0.8.0"
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
@@ -17,13 +17,20 @@ serde_json = "1"
 sha2 = "0.11"
 tempfile = "3"
 tokio = { version = "1", features = ["process", "rt", "time"] }
-toml = "0.9"
+toml = "1.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-crossfont = "=0.8.1"
+crossfont = "=0.9.0"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSMenu", "NSMenuItem", "NSView", "NSWindow"] }
 raw-window-handle = "0.6"
+
+# The vendored iced_term is a workspace member, and a default member, so plain
+# `cargo test`, `cargo clippy` and `cargo llvm-cov` also run its tests (including
+# the NFR-08 performance tests) and lints. `[patch]` swaps it in for crates.io.
+[workspace]
+members = [".", "vendor/iced_term"]
+default-members = [".", "vendor/iced_term"]
 
 [patch.crates-io]
 iced_term = { path = "vendor/iced_term" }
@@ -33,6 +40,11 @@ iced_term = { path = "vendor/iced_term" }
 # unoptimized for typing and scrolling to feel instant. This crate stays at
 # opt-level 0, so incremental rebuilds remain fast.
 [profile.dev.package."*"]
+opt-level = 3
+
+# `"*"` covers only non-members, so name the vendored terminal explicitly now
+# that it is a workspace member.
+[profile.dev.package.iced_term]
 opt-level = 3
 
 # Lints checked by `cargo clippy` locally and in CI (`.github/workflows/ci.yml`).

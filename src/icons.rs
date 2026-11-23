@@ -1,4 +1,4 @@
-use crate::{pull_request::Status, style};
+use crate::{pull_request::Status, theme::Palette};
 use iced::Color;
 use iced::widget::{Svg, svg};
 use std::sync::OnceLock;
@@ -41,12 +41,12 @@ icon!(
     r#"<path d="M5 6v8m0-8q0 4 8 4"/><circle cx="5" cy="4" r="2"/><circle cx="5" cy="16" r="2"/><circle cx="15" cy="10" r="2"/>"#
 );
 
-pub fn pr_status<'a>(size: u32, status: Status) -> Svg<'a> {
+pub fn pr_status<'a>(size: u32, status: Status, p: Palette) -> Svg<'a> {
     match status {
-        Status::Open => pull_request(size, style::GREEN),
-        Status::Draft => pr_draft(size, style::MUTED),
-        Status::Closed => pr_closed(size, style::RED),
-        Status::Merged => pr_merged(size, style::PURPLE),
+        Status::Open => pull_request(size, p.green),
+        Status::Draft => pr_draft(size, p.muted()),
+        Status::Closed => pr_closed(size, p.red),
+        Status::Merged => pr_merged(size, p.purple),
     }
 }
 
@@ -72,4 +72,29 @@ icon!(empty, r#"<circle cx="10" cy="10" r="5.2"/>"#);
 icon!(
     connected,
     r#"<circle cx="10" cy="10" r="5.2" fill="white"/>"#
+);
+// Eight-tooth gear around a hub, for Settings.
+icon!(
+    settings,
+    r#"<path d="M15.6 7.8L17.9 8.6L17.9 11.4L15.6 12.2L15.5 12.4L16.6 14.6L14.6 16.6L12.4 15.5L12.2 15.6L11.4 17.9L8.6 17.9L7.8 15.6L7.6 15.5L5.4 16.6L3.4 14.6L4.5 12.4L4.4 12.2L2.1 11.4L2.1 8.6L4.4 7.8L4.5 7.6L3.4 5.4L5.4 3.4L7.6 4.5L7.8 4.4L8.6 2.1L11.4 2.1L12.2 4.4L12.4 4.5L14.6 3.4L16.6 5.4L15.5 7.6z"/><circle cx="10" cy="10" r="2.4"/>"#
+);
+// A painter's palette, for the Theme settings page.
+icon!(
+    palette,
+    r#"<path d="M10 3a7 7 0 1 0 0 14c1.2 0 1.6-.9 1.2-1.8-.5-1 .1-2.2 1.3-2.2H15a2.5 2.5 0 0 0 2.5-2.5C17.5 6.3 14.2 3 10 3z"/><circle cx="6.5" cy="9" r=".8"/><circle cx="9" cy="6.3" r=".8"/><circle cx="12.6" cy="6.8" r=".8"/>"#
+);
+
+// tmux session badges on the right of a sidebar worktree row. The SVG `fill`
+// is tinted by the style color like the strokes, so a filled dot stays a dot.
+// A live session with nothing new: a small ring.
+icon!(session_live, r#"<circle cx="10" cy="10" r="3"/>"#);
+// New output since the user last looked: a filled dot.
+icon!(
+    session_activity,
+    r#"<circle cx="10" cy="10" r="3.5" fill="white"/>"#
+);
+// A bell rang (for example, an agent finished or is waiting for input).
+icon!(
+    bell,
+    r#"<path d="M6 13.5V9a4 4 0 0 1 8 0v4.5l1.5 1.5h-11zM8.5 17h3"/>"#
 );

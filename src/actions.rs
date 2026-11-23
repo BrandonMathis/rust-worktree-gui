@@ -1,6 +1,9 @@
-use crate::tmux;
-use std::path::PathBuf;
-use std::process::Command;
+use crate::{runner, tmux};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// `open` returns as soon as Launch Services has handed the path to the app.
+pub const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DirectoryAction {
@@ -31,11 +34,10 @@ impl DirectoryAction {
             Self::VsCode => "com.microsoft.VSCode",
             Self::CopyPath => unreachable!(),
         };
-        let output = Command::new("/usr/bin/open")
-            .args(["-b", app, "--"])
-            .arg(&path)
-            .output()
-            .map_err(|err| format!("{self}: {err}"))?;
+        let mut open = runner::command(Path::new("/usr/bin/open"));
+        open.args(["-b", app, "--"]).arg(&path);
+        let output =
+            runner::run(&mut open, OPEN_TIMEOUT).map_err(|err| format!("{self}: {err}"))?;
         if !output.status.success() {
             return Err(format!(
                 "{self}: {}",
