@@ -49,14 +49,14 @@ The embedded widget still paints text with iced rather than Alacritty’s render
 
 ```sh
 cargo fmt --all --check
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --workspace --all-targets --features rust-worktree-gui/capture -- -D warnings
 cargo test --locked                                     # app and vendored iced_term tests
 cargo doc --locked --no-deps --document-private-items   # with RUSTDOCFLAGS="-D warnings"
 cargo deny check                                        # advisories, licenses, sources
 cargo llvm-cov --locked --ignore-filename-regex vendor/ # app coverage (needs llvm-tools)
 ```
 
-GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.
+GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Pull requests that touch UI files also get a comment with screenshots of three app states (`.github/workflows/screenshots.yml`). To capture them locally: `cargo build --locked --features capture && ruby script/capture/capture.rb` (PNGs in `target/screenshots`; it uses fixture repos and a private tmux server, never your own). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.
 
 Security checks (daily RustSec audit, dependency review, CodeQL, workflow audit) run in `.github/workflows/security.yml`, and a weekly report flags dependencies that are falling out of date or support. Dependabot proposes minor and major updates only; patch releases arrive only as security fixes. [SECURITY.md](SECURITY.md) explains the policy and how to report a vulnerability.
 

@@ -32,6 +32,10 @@ raw-window-handle = "0.6"
 members = [".", "vendor/iced_term"]
 default-members = [".", "vendor/iced_term"]
 
+[features]
+# Startup hooks for the PR screenshot workflow (`src/capture.rs`). Off by default.
+capture = []
+
 [patch.crates-io]
 iced_term = { path = "vendor/iced_term" }
 

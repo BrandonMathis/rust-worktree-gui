@@ -1,0 +1,12 @@
+[user]
+	name = Demo Developer
+	email = demo@example.com
+[init]
+	defaultBranch = main
+[advice]
+	detachedHead = false
+[alias]
+	lg = log -n 12 --graph --date=short --format='%C(yellow)%h%C(reset) %s %C(blue)%ad%C(auto)%d'
+[core]
+	# Short output prints directly instead of waiting in the pager.
+	pager = less -FRX

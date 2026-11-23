@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fake GitHub CLI for screenshots. Answers `gh pr view --json ...` for the
+# fixture branches so the sidebar shows each pull request status.
+[ "$1 $2" = "pr view" ] || exit 1
+branch=$(git branch --show-current 2>/dev/null)
+repo=$(basename "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's#/.git$##')")
+case "$branch" in
+  feature/session-tokens) number=128 state=OPEN draft=false ;;
+  fix/rate-limiter) number=131 state=OPEN draft=true ;;
+  release/2.4) number=119 state=MERGED draft=false ;;
+  feat/color-tokens) number=42 state=OPEN draft=false ;;
+  chore/drop-ie11) number=37 state=CLOSED draft=false ;;
+  *) echo "no pull requests found for branch \"$branch\"" >&2; exit 1 ;;
+esac
+printf '{"number":%s,"url":"https://github.com/acme/%s/pull/%s","state":"%s","isDraft":%s,"headRefName":"%s"}\n' \
+  "$number" "$repo" "$number" "$state" "$draft" "$branch"

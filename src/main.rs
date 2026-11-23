@@ -1,5 +1,7 @@
 mod actions;
 mod app;
+#[cfg(feature = "capture")]
+mod capture;
 mod color_wheel;
 mod config;
 mod create;
@@ -25,6 +27,10 @@ fn main() -> iced::Result {
     // SAFETY: this is the first statement in `main`, so no other thread exists yet.
     // It keeps a hook's `GIT_DIR` (and friends) out of the embedded terminal.
     unsafe { runner::remove_git_overrides_from_process() };
+    let size = iced::Size::new(1120.0, 720.0);
+    // Screenshot builds can start at another size, such as the minimum window.
+    #[cfg(feature = "capture")]
+    let size = capture::window_size().unwrap_or(size);
     let preferences = terminal_config::Preferences::load();
     let font = preferences
         .as_ref()
@@ -42,7 +48,7 @@ fn main() -> iced::Result {
     .theme(app::App::theme)
     .style(|app, _| style::application(app.palette()))
     .window(iced::window::Settings {
-        size: iced::Size::new(1120.0, 720.0),
+        size,
         transparent: true,
         blur: cfg!(target_os = "macos"),
         exit_on_close_request: false,

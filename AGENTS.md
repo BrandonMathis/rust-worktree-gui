@@ -11,7 +11,7 @@ Rust 1.90.0 is pinned in `.tool-versions` (asdf). Always pass `--locked`.
 ```sh
 cargo run --locked                                   # launch the app (needs tmux)
 cargo fmt --all --check
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --workspace --all-targets --features rust-worktree-gui/capture -- -D warnings
 cargo test --locked                                  # all tests, incl. vendor/iced_term; add a name to filter
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
 cargo deny check                                     # advisories, licenses, sources (deny.toml)
@@ -29,6 +29,16 @@ ruby scripts/test/dependency_health_test.rb          # tests for that report
 - Don't keep requirement counts or totals in `docs/frd/README.md` or `docs/REQUIREMENTS.md`. Every feature would edit the same lines and cause merge conflicts.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
 - `PLAN.md` is the original external-Alacritty plan and is historical. Don't treat it as current.
+
+## Screenshots
+
+`.github/workflows/screenshots.yml` posts screenshots of three app states on PRs that touch UI files. It builds with `--features capture` (startup hooks in `src/capture.rs`, off in normal builds) and runs `script/capture/capture.rb`, which creates fixture repos, a private tmux server with vim and shell splits, and an isolated `HOME`. It never touches your bookmarks, tmux sessions or dotfiles. Run it locally to check a visual change (a window appears briefly; your terminal needs Screen Recording permission):
+
+```sh
+cargo build --locked --features capture && ruby script/capture/capture.rb   # PNGs in target/screenshots
+```
+
+When a UI change adds or moves a key state, update the `states` list in `capture.rb`.
 
 ## Architecture
 
