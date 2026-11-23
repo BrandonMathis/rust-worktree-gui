@@ -45,7 +45,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup. |
 | `terminal.rs` | Wraps the `iced_term` widget (`Console`). |
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
-| `pull_request.rs` | `gh pr view` lookup and validation of the HTTPS PR URL. |
+| `pull_request.rs` | One `gh pr list` per project, matching PRs to worktrees by branch, validation of the HTTPS PR URL, and the per-project `Badges`. |
 | `runner.rs` | Every subprocess: tool lookup (`PATH` + Homebrew), removal of the `GIT_*` overrides, per-call timeouts. |
 | `actions.rs` | Open in Finder or VS Code, copy path. |
 | `create.rs`, `quit.rs` | New project and worktree creation flow; quit confirmation. |

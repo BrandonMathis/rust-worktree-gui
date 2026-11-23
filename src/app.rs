@@ -12,7 +12,6 @@ use crate::{
     theme::{self, Palette},
     tmux,
 };
-use iced::futures::{StreamExt, stream};
 use iced::widget::{
     Space, Svg, button, column, container, hover, mouse_area, opaque, operation, pick_list, row,
     scrollable, stack, text, text_input, tooltip,
@@ -114,14 +113,8 @@ struct Project {
     expanded: bool,
     refresh_id: Option<usize>,
     inventory: Option<Result<Vec<Worktree>, String>>,
-    pull_requests: BTreeMap<PathBuf, PullRequestCheck>,
+    pull_requests: pull_request::Badges,
     open_after_refresh: Option<PathBuf>,
-}
-
-#[derive(Default)]
-struct PullRequestCheck {
-    request_id: Option<u64>,
-    pr: Option<PullRequest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,7 +150,7 @@ pub enum Message {
     Refreshed(usize, Result<Vec<Worktree>, String>),
     ToggleProject(ProjectId),
     SelectWorktree(ProjectId, PathBuf),
-    PullRequestFound(ProjectId, PathBuf, u64, Option<PullRequest>),
+    PullRequestsListed(ProjectId, u64, Option<Vec<PullRequest>>),
     OpenPullRequest,
     PullRequestOpened(Result<(), String>),
     Reconnect,
@@ -230,7 +223,7 @@ impl Project {
     }
 
     fn pull_request(&self, path: &Path) -> Option<&PullRequest> {
-        self.pull_requests.get(path)?.pr.as_ref()
+        self.pull_requests.get(path)
     }
 
     /// Picks the single sidebar icon for `tree`. Precedence: unavailable, then
@@ -346,7 +339,7 @@ impl App {
             expanded: false,
             refresh_id: None,
             inventory: None,
-            pull_requests: BTreeMap::new(),
+            pull_requests: pull_request::Badges::default(),
             open_after_refresh: None,
         });
         id
@@ -372,39 +365,28 @@ impl App {
         Some((project, selection))
     }
 
-    fn lookup_pull_requests(&mut self, id: ProjectId, only: Option<&Path>) -> Task<Message> {
+    /// Starts one `gh pr list` for the project, unless one is already running: its
+    /// answer is matched against the worktrees listed when it arrives, so it is still
+    /// good for a newer inventory.
+    fn lookup_pull_requests(&mut self, id: ProjectId) -> Task<Message> {
         let Some(project) = self.projects.iter_mut().find(|project| project.id == id) else {
             return Task::none();
         };
-        let targets: Vec<_> = project
+        let any_branch = project
             .worktrees()
             .iter()
-            .filter(|tree| {
-                only.is_none_or(|path| tree.path == path)
-                    && tree.unavailable_reason().is_none()
-                    && !tree.detached
-            })
-            .filter_map(|tree| Some((tree.path.clone(), tree.branch.clone()?)))
-            .collect();
-        let mut requests = Vec::new();
-        for (path, branch) in targets {
-            let check = project.pull_requests.entry(path.clone()).or_default();
-            if check.request_id.is_none() {
-                self.pr_request_id += 1;
-                check.request_id = Some(self.pr_request_id);
-                requests.push((path, branch, self.pr_request_id));
-            }
-        }
-        if requests.is_empty() {
+            .any(|tree| pull_request::branch_to_match(tree).is_some());
+        if !any_branch || project.pull_requests.in_flight() {
             return Task::none();
         }
-        Task::stream(
-            stream::iter(requests)
-                .map(move |(path, branch, request)| async move {
-                    let pr = pull_request::lookup(&path, &branch).await;
-                    Message::PullRequestFound(id, path, request, pr)
-                })
-                .buffer_unordered(4),
+        self.pr_request_id += 1;
+        let request = self.pr_request_id;
+        project.pull_requests.start(request);
+        let checkout = project.checkout.root.clone();
+        background(
+            move || Ok(pull_request::list(&checkout)),
+            // A failed background task counts as "no answer" and hides the badges.
+            move |prs| Message::PullRequestsListed(id, request, prs.ok().flatten()),
         )
     }
 
@@ -712,8 +694,15 @@ impl App {
                 {
                     project.refresh_id = None;
                     project.inventory = Some(result);
-                    // Old results can't be applied to a worktree that changed branches.
-                    project.pull_requests.clear();
+                    // Keep badges until the next lookup answers (no flicker), but drop
+                    // any whose worktree disappeared or changed branch.
+                    // (Read `inventory` directly rather than through `worktrees()`, so the
+                    // borrow checker sees two separate fields borrowed, not all of `project`.)
+                    let trees = match &project.inventory {
+                        Some(Ok(trees)) => trees.as_slice(),
+                        _ => &[],
+                    };
+                    project.pull_requests.retain_listed(trees);
                     let id = project.id;
                     let created = project.open_after_refresh.take();
                     if self.worktree_name_draft.as_ref().is_some_and(|draft| {
@@ -742,7 +731,7 @@ impl App {
                             _ => {}
                         }
                     }
-                    let lookup = self.lookup_pull_requests(id, None);
+                    let lookup = self.lookup_pull_requests(id);
                     if let Some(path) = created {
                         if self
                             .projects
@@ -779,16 +768,33 @@ impl App {
                 }
             }
             Message::SelectWorktree(id, path) => {
-                self.select(id, Some(path.clone()));
-                return Task::batch([self.connect(), self.lookup_pull_requests(id, Some(&path))]);
+                // Clicking the selected worktree again must not re-run `gh` (review L4).
+                let changed = self.selection.as_ref().is_none_or(|selection| {
+                    selection.project != id || selection.worktree.as_ref() != Some(&path)
+                });
+                let has_branch = self
+                    .projects
+                    .iter()
+                    .find(|p| p.id == id)
+                    .and_then(|p| p.worktree(&path))
+                    .and_then(pull_request::branch_to_match)
+                    .is_some();
+                self.select(id, Some(path));
+                let lookup = if changed && has_branch {
+                    self.lookup_pull_requests(id)
+                } else {
+                    Task::none()
+                };
+                return Task::batch([self.connect(), lookup]);
             }
-            Message::PullRequestFound(id, path, request, pr) => {
-                if let Some(project) = self.projects.iter_mut().find(|p| p.id == id)
-                    && let Some(check) = project.pull_requests.get_mut(&path)
-                    && check.request_id == Some(request)
-                {
-                    check.request_id = None;
-                    check.pr = pr;
+            Message::PullRequestsListed(id, request, prs) => {
+                if let Some(project) = self.projects.iter_mut().find(|p| p.id == id) {
+                    // `finish` ignores an answer to an older or cancelled lookup.
+                    let worktrees = match &project.inventory {
+                        Some(Ok(trees)) => trees.as_slice(),
+                        _ => &[],
+                    };
+                    project.pull_requests.finish(request, prs, worktrees);
                 }
             }
             Message::OpenPullRequest => {
@@ -2336,6 +2342,12 @@ mod tests {
         assert!(app.notice.as_deref().unwrap().contains("Replace Anchor"));
     }
 
+    /// Answers the PR lookup in flight for `id` with `prs` (`None`: gh failed).
+    fn answer_pr_lookup(app: &mut App, id: ProjectId, prs: Option<Vec<PullRequest>>) {
+        let request = app.pr_request_id;
+        let _ = app.update(Message::PullRequestsListed(id, request, prs));
+    }
+
     #[test]
     fn forgetting_the_selected_project_detaches_and_selects_the_next() {
         let (tmp, mut app, id, _root, linked) = app_with_linked_checkout();
@@ -2345,14 +2357,8 @@ mod tests {
         let next = app
             .bookmark(PickMode::Add, git::discover(&other).unwrap())
             .unwrap();
-        let _ = app.update(Message::SelectWorktree(id, linked.clone()));
-        let request = app.pr_request_id;
-        let _ = app.update(Message::PullRequestFound(
-            id,
-            linked,
-            request,
-            Some(PullRequest::for_test(5)),
-        ));
+        let _ = app.update(Message::SelectWorktree(id, linked));
+        answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(5, "topic")]));
         app.console = ConsoleState::Connecting(3);
         assert!(app.selected_pull_request().is_some());
 
@@ -2370,35 +2376,74 @@ mod tests {
     }
 
     #[test]
-    fn refreshing_checks_all_worktrees_and_invalidates_in_flight_pr_results() {
+    fn refresh_keeps_pr_badges_until_the_new_lookup_answers() {
         let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
-        let _ = app.refresh(id);
-        let git_request = app.projects[0].refresh_id.unwrap();
-        let inventory = git::inventory(&app.projects[0].checkout);
-        let _ = app.update(Message::Refreshed(git_request, inventory));
-        let prior = app.projects[0].pull_requests[&linked].request_id.unwrap();
-        assert!(app.projects[0].pull_requests[&root].request_id.is_some());
-
-        let _ = app.refresh(id);
-        let git_request = app.projects[0].refresh_id.unwrap();
-        let inventory = git::inventory(&app.projects[0].checkout);
-        let _ = app.update(Message::Refreshed(git_request, inventory));
-        let current = app.projects[0].pull_requests[&linked].request_id.unwrap();
-        assert_ne!(prior, current);
-        let _ = app.update(Message::PullRequestFound(
+        refresh_now(&mut app, id);
+        assert!(
+            app.projects[0].pull_requests.in_flight(),
+            "one lookup per project"
+        );
+        let first = app.pr_request_id;
+        answer_pr_lookup(
+            &mut app,
             id,
-            linked.clone(),
-            prior,
-            Some(PullRequest::for_test(8)),
-        ));
-        assert!(app.projects[0].pull_request(&linked).is_none());
-        let _ = app.update(Message::PullRequestFound(
-            id,
-            linked.clone(),
-            current,
-            Some(PullRequest::for_test(9)),
-        ));
+            Some(vec![
+                PullRequest::for_test(9, "topic"),
+                PullRequest::for_test(3, "main"),
+            ]),
+        );
         assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 9);
+        assert_eq!(app.projects[0].pull_request(&root).unwrap().number, 3);
+
+        // A refresh keeps the badges while the next lookup runs, so they don't flicker,
+        // and a late answer to the previous lookup is ignored.
+        refresh_now(&mut app, id);
+        assert!(app.pr_request_id > first);
+        assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 9);
+        let stale = vec![PullRequest::for_test(8, "topic")];
+        let _ = app.update(Message::PullRequestsListed(id, first, Some(stale)));
+        assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 9);
+
+        // A worktree that changes branch loses its badge at once; the others keep theirs.
+        run_git(&linked, &["checkout", "-qb", "other"]);
+        refresh_now(&mut app, id);
+        assert!(app.projects[0].pull_request(&linked).is_none());
+        assert_eq!(app.projects[0].pull_request(&root).unwrap().number, 3);
+        answer_pr_lookup(
+            &mut app,
+            id,
+            Some(vec![
+                PullRequest::for_test(9, "topic"),
+                PullRequest::for_test(4, "other"),
+                PullRequest::for_test(3, "main"),
+            ]),
+        );
+        assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 4);
+
+        // So does a worktree that disappears from Git.
+        run_git(
+            &root,
+            &["worktree", "remove", "--force", "../linked checkout"],
+        );
+        refresh_now(&mut app, id);
+        assert!(app.projects[0].pull_request(&linked).is_none());
+        assert_eq!(app.projects[0].pull_request(&root).unwrap().number, 3);
+    }
+
+    #[test]
+    fn clicking_the_selected_worktree_again_does_not_look_up_its_pr_again() {
+        let (_tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+        assert_eq!(
+            app.update(Message::SelectWorktree(id, linked.clone()))
+                .units(),
+            2,
+            "tmux connection and PR lookup"
+        );
+        answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(7, "topic")]));
+        let request = app.pr_request_id;
+        assert_eq!(app.update(Message::SelectWorktree(id, linked)).units(), 0);
+        assert_eq!(app.pr_request_id, request);
+        assert_eq!(app.selected_pull_request().unwrap().number, 7);
     }
 
     #[test]
@@ -2413,23 +2458,15 @@ mod tests {
 
         // A PR on the main checkout doesn't replace its unique icon.
         let _ = app.update(Message::SelectWorktree(id, root.clone()));
-        let request = app.pr_request_id;
-        let _ = app.update(Message::PullRequestFound(
+        answer_pr_lookup(
+            &mut app,
             id,
-            root.clone(),
-            request,
-            Some(PullRequest::for_test(3)),
-        ));
+            Some(vec![
+                PullRequest::for_test(3, "main"),
+                PullRequest::for_test(4, "topic"),
+            ]),
+        );
         assert_eq!(icon(&app, &root), WorktreeIcon::Main);
-
-        let _ = app.update(Message::SelectWorktree(id, linked.clone()));
-        let request = app.pr_request_id;
-        let _ = app.update(Message::PullRequestFound(
-            id,
-            linked.clone(),
-            request,
-            Some(PullRequest::for_test(4)),
-        ));
         assert_eq!(
             icon(&app, &linked),
             WorktreeIcon::PullRequest(pull_request::Status::Open)
@@ -2446,28 +2483,31 @@ mod tests {
         let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
         let _ = app.update(Message::SelectWorktree(id, linked.clone()));
         let request = app.pr_request_id;
-        let _ = app.update(Message::SelectWorktree(id, root));
-        let _ = app.update(Message::PullRequestFound(
-            id,
-            linked.clone(),
-            request,
-            Some(PullRequest::for_test(12)),
-        ));
+        // Selecting another worktree while the project's lookup runs doesn't start another.
+        let _ = app.update(Message::SelectWorktree(id, root.clone()));
+        assert_eq!(app.pr_request_id, request);
+        answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(12, "topic")]));
         assert_eq!(app.projects[0].pull_request(&linked).unwrap().number, 12);
         assert!(app.selected_pull_request().is_none());
 
+        // Replace Anchor drops the badges and ignores the old anchor's lookup.
         let _ = app.update(Message::SelectWorktree(id, linked.clone()));
-        let current = app.pr_request_id;
-        assert!(current > request);
-        let _ = app.update(Message::PullRequestFound(
-            id,
-            linked.clone(),
-            request,
-            Some(PullRequest::for_test(15)),
-        ));
-        assert_eq!(app.selected_pull_request().unwrap().number, 12);
-        let _ = app.update(Message::PullRequestFound(id, linked, current, None));
+        let stale = app.pr_request_id;
+        assert!(stale > request);
+        app.bookmark(PickMode::Replace(id), git::discover(&linked).unwrap())
+            .unwrap();
         assert!(app.selected_pull_request().is_none());
+        refresh_now(&mut app, id);
+        let fresh = vec![PullRequest::for_test(15, "topic")];
+        let _ = app.update(Message::PullRequestsListed(id, stale, Some(fresh)));
+        assert!(app.selected_pull_request().is_none());
+        answer_pr_lookup(&mut app, id, Some(vec![PullRequest::for_test(16, "topic")]));
+        assert_eq!(app.selected_pull_request().unwrap().number, 16);
+
+        // No usable answer from gh (missing, logged out, timed out) hides the badges.
+        let _ = app.update(Message::SelectWorktree(id, root));
+        answer_pr_lookup(&mut app, id, None);
+        assert!(app.projects[0].pull_request(&linked).is_none());
     }
 
     #[test]
