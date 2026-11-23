@@ -255,6 +255,11 @@ impl App {
         if let Some(target) = crate::capture::target() {
             app.open_after_load(target);
         }
+        #[cfg(feature = "capture")]
+        if let Some(crate::capture::Open::Settings) = crate::capture::open() {
+            // The same draft the gear button opens, from the loaded palette.
+            app.settings = Some(settings::Draft::new(app.palette));
+        }
         (app, task)
     }
 
