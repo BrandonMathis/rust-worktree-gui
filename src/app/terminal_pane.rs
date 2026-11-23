@@ -10,7 +10,7 @@ use super::view::placeholder;
 use super::{App, Message, Project, background};
 use crate::git::Worktree;
 use crate::icons;
-use crate::style::{self, Button, Panel};
+use crate::style::{self, Button, Corners, Panel};
 use crate::terminal::Console;
 use crate::tmux;
 use iced::widget::{button, column, container, row, text, tooltip};
@@ -262,6 +262,7 @@ impl App {
     pub(super) fn terminal_pane<'a>(
         &'a self,
         tree: &'a Worktree,
+        corners: Corners,
     ) -> (Element<'a, Message>, Element<'a, Message>) {
         let p = self.palette();
         let (badge, badge_color, action, body) = if let Some(reason) = tree.unavailable_reason() {
@@ -276,9 +277,17 @@ impl App {
                 ConsoleState::Attached(console) => {
                     let failure = console.failure();
                     let open = console.is_open();
-                    let mut content = column![console.view().map(Message::Terminal)]
-                        .height(Fill)
-                        .spacing(6);
+                    // The terminal takes the pane's rounded corners unless an
+                    // error line sits below it, in the pane's bottom corners.
+                    let corners = if failure.is_some() {
+                        Corners::NONE
+                    } else {
+                        corners
+                    };
+                    let mut content =
+                        column![console.view(corners.radius()).map(Message::Terminal)]
+                            .height(Fill)
+                            .spacing(6);
                     if let Some(error) = failure {
                         content = content.push(text(error).size(13).color(p.red));
                     }
@@ -300,7 +309,7 @@ impl App {
                     "Connecting…",
                     p.muted(),
                     Some(("Cancel", Message::Detach)),
-                    column![console.view().map(Message::Terminal)]
+                    column![console.view(corners.radius()).map(Message::Terminal)]
                         .height(Fill)
                         .spacing(6)
                         .into(),

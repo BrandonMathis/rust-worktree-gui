@@ -10,6 +10,7 @@ use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::{cell, TermMode};
 use alacritty_terminal::vte::ansi::{self as ansi, CursorShape, NamedColor};
 use iced::alignment::Vertical;
+use iced::border::Radius;
 use iced::font::{Style as FontStyle, Weight as FontWeight};
 use iced::mouse::{Cursor, ScrollDelta};
 use iced::widget::canvas::{Frame, Path, Text};
@@ -28,6 +29,7 @@ pub struct TerminalView<'a> {
     term: &'a Terminal,
     dynamic_padding_scale: Option<f32>,
     backing_scale: f32,
+    corner_radius: Radius,
 }
 
 impl<'a> TerminalView<'a> {
@@ -37,7 +39,18 @@ impl<'a> TerminalView<'a> {
 
     /// Show an unpadded terminal at the window's physical-to-logical scale.
     pub fn show_at_scale(term: &'a Terminal, scale: f32) -> Element<'a, Event> {
-        Self::show_with_options(term, None, scale)
+        Self::show_rounded(term, scale, Radius::default())
+    }
+
+    /// Patch: like `show_at_scale`, with rounded corners. Upstream always
+    /// painted a square background, which covered the rounded corners of
+    /// the pane it is embedded in.
+    pub fn show_rounded(
+        term: &'a Terminal,
+        scale: f32,
+        corner_radius: impl Into<Radius>,
+    ) -> Element<'a, Event> {
+        Self::show_with_options(term, None, scale, corner_radius.into())
     }
 
     /// Optionally distribute leftover backing pixels evenly around the grid.
@@ -45,22 +58,33 @@ impl<'a> TerminalView<'a> {
         term: &'a Terminal,
         scale: Option<f32>,
     ) -> Element<'a, Event> {
-        Self::show_with_options(term, scale, scale.unwrap_or(1.0))
+        Self::show_with_options(
+            term,
+            scale,
+            scale.unwrap_or(1.0),
+            Radius::default(),
+        )
     }
 
     fn show_with_options(
         term: &'a Terminal,
         padding: Option<f32>,
         scale: f32,
+        corner_radius: Radius,
     ) -> Element<'a, Event> {
         container(Self {
             term,
             dynamic_padding_scale: padding,
             backing_scale: scale.max(1.0),
+            corner_radius,
         })
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(|_| term.theme.container_style())
+        .style(move |_| {
+            let mut style = term.theme.container_style();
+            style.border.radius = corner_radius;
+            style
+        })
         .into()
     }
 
@@ -516,6 +540,12 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
         _cursor: Cursor,
         viewport: &Rectangle,
     ) {
+        // Colored cell runs are trimmed to the rounded corners of the whole
+        // widget, so read its bounds before narrowing to the grid.
+        let clip = RoundedClip {
+            bounds: layout.bounds(),
+            radius: self.corner_radius,
+        };
         let layout = grid_layout(layout);
         let state = tree.state.downcast_ref::<TerminalViewState>();
         let content = self.term.backend.renderable_content();
@@ -568,7 +598,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                     if bg_batch_rect.can_flush() {
                         let line = last_line.unwrap_or(line);
                         frame.fill(
-                            &bg_batch_rect.build(line),
+                            &clip.path(bg_batch_rect.build(line)),
                             bg_batch_rect.color,
                         );
                     }
@@ -643,7 +673,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                         // New colored run (or non-contiguous): flush previous run if any
                         if bg_batch_rect.can_flush() {
                             frame.fill(
-                                &bg_batch_rect.build(line),
+                                &clip.path(bg_batch_rect.build(line)),
                                 bg_batch_rect.color,
                             );
                         }
@@ -660,7 +690,10 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                     }
                 } else if bg_batch_rect.can_flush() {
                     // Background returns to default, flush current background rect and init the new one
-                    frame.fill(&bg_batch_rect.build(line), bg_batch_rect.color);
+                    frame.fill(
+                        &clip.path(bg_batch_rect.build(line)),
+                        bg_batch_rect.color,
+                    );
 
                     bg_batch_rect = BackgroundRect::default()
                         .with_cell_height(cell_height)
@@ -727,14 +760,14 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
             // Flush any remaining background run at the end
             if bg_batch_rect.can_flush() {
                 frame.fill(
-                    &bg_batch_rect.build(last_line.unwrap_or(0)),
+                    &clip.path(bg_batch_rect.build(last_line.unwrap_or(0))),
                     bg_batch_rect.color,
                 );
             }
             // Like font glyphs, these foreground shapes must sit above all backgrounds.
             for (block, cell, color) in blocks {
                 block.draw(cell, |point, size| {
-                    frame.fill_rectangle(point, size, color)
+                    frame.fill(&clip.path(Rectangle::new(point, size)), color)
                 });
             }
             if let Some((shape, bounds, color)) = cursor_stroke {
@@ -944,10 +977,10 @@ impl BackgroundRect {
         self
     }
 
-    fn build(&self, line: i32) -> Path {
+    fn build(&self, line: i32) -> Rectangle {
         let flush_y = self.layout_offset_y
             + ((line as f32 + self.display_offset) * self.cell_height);
-        Path::rectangle(
+        Rectangle::new(
             Point::new(self.start_x, flush_y),
             Size::new(self.width, self.cell_height),
         )
@@ -968,6 +1001,108 @@ impl BackgroundRect {
     }
 }
 
+/// Patch: trims colored cell runs (a tmux status line, a selection, block
+/// glyphs) to the widget's rounded corners, so they don't paint a square
+/// corner over the rounded background. Glyphs are not trimmed; the area
+/// outside a corner's curve is too small to hold much of one.
+#[derive(Clone, Copy, Debug)]
+struct RoundedClip {
+    bounds: Rectangle,
+    radius: Radius,
+}
+
+impl RoundedClip {
+    /// Vertical distance between the points sampled along a corner's curve.
+    /// Half a point is one pixel on a Retina display.
+    const STEP: f32 = 0.5;
+
+    fn path(&self, rect: Rectangle) -> Path {
+        match self.outline(rect) {
+            None => Path::rectangle(rect.position(), rect.size()),
+            Some(points) => Path::new(|builder| {
+                let mut points = points.into_iter();
+                if let Some(first) = points.next() {
+                    builder.move_to(first);
+                }
+                for point in points {
+                    builder.line_to(point);
+                }
+                builder.close();
+            }),
+        }
+    }
+
+    /// The outline of `rect` trimmed to the rounded corners, as a polygon
+    /// (down the right side, then up the left), or `None` when `rect` stays
+    /// clear of every rounded corner and can be filled as is.
+    fn outline(&self, rect: Rectangle) -> Option<Vec<Point>> {
+        if !self.touches_a_corner(rect) {
+            return None;
+        }
+        let steps = ((rect.height / Self::STEP).ceil() as usize).max(1);
+        let ys: Vec<f32> = (0..=steps)
+            .map(|i| rect.y + rect.height * i as f32 / steps as f32)
+            .collect();
+        let spans: Vec<(f32, f32)> =
+            ys.iter().map(|&y| self.span(rect, y)).collect();
+        let right = ys.iter().zip(&spans).map(|(&y, &(_, r))| Point::new(r, y));
+        let left = ys
+            .iter()
+            .zip(&spans)
+            .rev()
+            .map(|(&y, &(l, _))| Point::new(l, y));
+        Some(right.chain(left).collect())
+    }
+
+    fn touches_a_corner(&self, rect: Rectangle) -> bool {
+        let b = self.bounds;
+        let Radius {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        } = self.radius;
+        let (rect_right, rect_bottom) =
+            (rect.x + rect.width, rect.y + rect.height);
+        let (right, bottom) = (b.x + b.width, b.y + b.height);
+        let near_top = |r: f32| r > 0.0 && rect.y < b.y + r;
+        let near_bottom = |r: f32| r > 0.0 && rect_bottom > bottom - r;
+        let near_left = |r: f32| rect.x < b.x + r;
+        let near_right = |r: f32| rect_right > right - r;
+        (near_top(top_left) && near_left(top_left))
+            || (near_top(top_right) && near_right(top_right))
+            || (near_bottom(bottom_left) && near_left(bottom_left))
+            || (near_bottom(bottom_right) && near_right(bottom_right))
+    }
+
+    /// The left and right ends of `rect`'s row of pixels at height `y`.
+    fn span(&self, rect: Rectangle, y: f32) -> (f32, f32) {
+        let b = self.bounds;
+        let from_top = y - b.y;
+        let from_bottom = b.y + b.height - y;
+        let r = self.radius;
+        let left = b.x
+            + corner_inset(r.top_left, from_top)
+                .max(corner_inset(r.bottom_left, from_bottom));
+        let right = b.x + b.width
+            - corner_inset(r.top_right, from_top)
+                .max(corner_inset(r.bottom_right, from_bottom));
+        let start = rect.x.max(left);
+        let end = (rect.x + rect.width).min(right).max(start);
+        (start, end)
+    }
+}
+
+/// How far a corner of `radius` pulls the side of the widget inward, at
+/// `depth` from the widget's top or bottom edge.
+fn corner_inset(radius: f32, depth: f32) -> f32 {
+    if radius <= 0.0 || depth >= radius {
+        return 0.0;
+    }
+    let rise = radius - depth.max(0.0);
+    radius - (radius * radius - rise * rise).max(0.0).sqrt()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -983,6 +1118,61 @@ mod tests {
         assert_eq!(super::cell_shaping('é'), Shaping::Advanced);
         assert_eq!(super::cell_shaping('\u{e0b0}'), Shaping::Advanced);
         assert_eq!(super::cell_shaping('漢'), Shaping::Advanced);
+    }
+
+    /// A 100×100 widget whose bottom-right corner has a 12pt radius.
+    fn bottom_right_clip() -> super::RoundedClip {
+        super::RoundedClip {
+            bounds: Rectangle::new(Point::ORIGIN, Size::new(100.0, 100.0)),
+            radius: super::Radius::default().bottom_right(12.0),
+        }
+    }
+
+    #[test]
+    fn cell_runs_away_from_rounded_corners_stay_rectangles() {
+        let clip = bottom_right_clip();
+        let middle =
+            Rectangle::new(Point::new(0.0, 40.0), Size::new(100.0, 16.0));
+        assert_eq!(clip.outline(middle), None);
+        // The bottom row's left end sits in a square corner.
+        let bottom_left =
+            Rectangle::new(Point::new(0.0, 84.0), Size::new(40.0, 16.0));
+        assert_eq!(clip.outline(bottom_left), None);
+        // Without any radius nothing is ever trimmed.
+        let square = super::RoundedClip {
+            radius: super::Radius::default(),
+            ..clip
+        };
+        let full = Rectangle::new(Point::ORIGIN, Size::new(100.0, 100.0));
+        assert_eq!(square.outline(full), None);
+    }
+
+    #[test]
+    fn cell_runs_in_a_rounded_corner_follow_its_curve() {
+        let clip = bottom_right_clip();
+        // A status line filling the bottom row to the widget's right edge.
+        let status =
+            Rectangle::new(Point::new(60.0, 84.0), Size::new(40.0, 16.0));
+        let outline = clip.outline(status).unwrap_or_default();
+        let right_end = |y: f32| {
+            outline
+                .iter()
+                .filter(|p| p.x > 60.0 && (p.y - y).abs() < 0.01)
+                .map(|p| p.x)
+                .fold(f32::NAN, f32::max)
+        };
+        // Above the curve the run reaches the edge; at the bottom it stops
+        // where the curve meets the bottom edge, 12pt in.
+        assert_eq!(right_end(84.0), 100.0);
+        assert_eq!(right_end(88.0), 100.0);
+        assert!((right_end(100.0) - 88.0).abs() < 0.01);
+        // Every point stays inside the corner's circle.
+        let center = Point::new(88.0, 88.0);
+        for p in outline.iter().filter(|p| p.x > 88.0 && p.y > 88.0) {
+            assert!(p.distance(center) <= 12.0 + 0.01, "{p:?} is outside");
+        }
+        // The left end is untouched.
+        assert!(outline.iter().filter(|p| p.x < 88.0).all(|p| p.x == 60.0));
     }
 
     use super::*;
