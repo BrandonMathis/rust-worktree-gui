@@ -35,6 +35,8 @@ This index deliberately has no per-area requirement counts. Keeping totals here 
 cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked   # includes the vendored iced_term tests
+cargo test --locked --features perf perf::   # the latency harness (NFR-11)
+ruby scripts/test/latency_test.rb            # the latency comparison rules (NFR-11)
 ```
 
 Tests that need tmux (`migrates_tmux_session_in_place_and_preserves_a_conflicting_session`) skip themselves when tmux isn't installed. They use a private socket and never touch the user's `worktree-browser` server.

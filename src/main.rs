@@ -9,6 +9,8 @@ mod confirmation;
 mod create;
 mod git;
 mod icons;
+#[cfg(feature = "perf")]
+mod perf;
 mod pull_request;
 mod quit;
 mod row_menu;
@@ -29,6 +31,11 @@ fn main() -> iced::Result {
     // SAFETY: this is the first statement in `main`, so no other thread exists yet.
     // It keeps a hook's `GIT_DIR` (and friends) out of the embedded terminal.
     unsafe { runner::remove_git_overrides_from_process() };
+    // Latency builds only: `--perf-latency` measures instead of opening a window.
+    #[cfg(feature = "perf")]
+    if let Some(code) = perf::run_if_requested() {
+        std::process::exit(code);
+    }
     let size = iced::Size::new(1120.0, 720.0);
     // Screenshot builds can start at another size, such as the minimum window.
     #[cfg(feature = "capture")]
