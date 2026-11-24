@@ -271,9 +271,7 @@ impl App {
                 groups.push((project.id, group.into()));
                 continue;
             }
-            let mut children =
-                column![container(text("Worktrees").size(10).color(p.muted())).padding([1, 4]),]
-                    .spacing(1);
+            let mut children = column![].spacing(1);
             if project.worktrees().is_empty() {
                 children = children.push(
                     text(if project.refresh_id.is_some() {

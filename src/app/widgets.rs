@@ -5,11 +5,11 @@ use crate::actions::DirectoryAction;
 use crate::style::{self, Button, Panel};
 use crate::theme::Palette;
 use crate::{icons, row_menu};
-use iced::widget::{Svg, button, container, hover, pick_list, text, tooltip};
+use iced::widget::{Svg, button, container, hover, text, tooltip};
 use iced::{Element, Fill};
 
-/// The actions offered for a worktree (`worktree == true`) or a project. The
-/// sidebar's ⋮ menu and the header's Actions menu show the same list.
+/// The actions offered in a sidebar row's ⋮ menu, for a worktree
+/// (`worktree == true`) or a project.
 pub(super) fn menu_actions(worktree: bool) -> Vec<MenuAction> {
     let mut actions = Vec::new();
     if !worktree {
@@ -43,22 +43,6 @@ pub(super) fn with_row_menu<'a>(
             .align_right(Fill)
             .center_y(Fill),
     )
-}
-
-/// The header's Actions drop-down.
-pub(super) fn actions_menu(target: Selection, p: Palette) -> Element<'static, Message> {
-    pick_list(
-        menu_actions(target.worktree.is_some()),
-        None::<MenuAction>,
-        move |action| Message::MenuAction(target.clone(), action),
-    )
-    .placeholder("Actions")
-    .width(164)
-    .text_size(12)
-    .padding([4, 7])
-    .style(style::action_picker(p))
-    .menu_style(style::action_menu(p))
-    .into()
 }
 
 /// A label that never wraps; overflow is clipped.

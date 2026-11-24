@@ -1,7 +1,7 @@
 //! `App::view`: the window layout, the workspace beside the sidebar, and the
 //! worktree header.
 
-use super::widgets::{actions_menu, single_line};
+use super::widgets::single_line;
 use super::{App, Message, Project, Selection, SidebarZone, WORKTREE_NAME_INPUT, pull_requests};
 use crate::create::ProjectChoice;
 use crate::git::Worktree;
@@ -269,14 +269,9 @@ impl App {
         };
         let editor = self.rename_editor(&target, tree.label(), false);
         let (terminal_status, body) = self.terminal_pane(tree, corners);
-        let heading = row![
-            self.show_sidebar_button(),
-            title,
-            terminal_status,
-            actions.push(actions_menu(target, p)),
-        ]
-        .spacing(4)
-        .align_y(Center);
+        let heading = row![self.show_sidebar_button(), title, terminal_status, actions]
+            .spacing(4)
+            .align_y(Center);
         let mut header = column![heading].spacing(3);
         if let Some(editor) = editor {
             header = header.push(editor);
