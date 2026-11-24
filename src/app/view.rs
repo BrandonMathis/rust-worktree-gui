@@ -79,6 +79,9 @@ impl App {
             // The stack keeps its base layout; the top layer only paints over the terminal.
             workspace = workspace.push(column![Space::new().height(36), panel]);
         }
+        if let Some(modal) = self.unavailable_modal() {
+            workspace = workspace.push(modal);
+        }
         workspace.into()
     }
 

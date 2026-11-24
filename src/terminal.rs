@@ -59,7 +59,7 @@ impl Console {
     }
 
     /// Identifies this terminal instance; a reconnect creates a new id.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "perf"))]
     pub fn id(&self) -> u64 {
         self.widget.id
     }

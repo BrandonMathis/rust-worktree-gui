@@ -3,7 +3,7 @@
 
 use super::project_list::{GRIP_WIDTH, reorderable};
 use super::widgets::{icon_button, settings_button, single_line, with_row_menu};
-use super::{App, Message, Project, Selection};
+use super::{App, Message, Project, ProjectId, Selection};
 use crate::create::ProjectChoice;
 use crate::git::Worktree;
 use crate::style::{self, Button, Corners, Panel};
@@ -80,6 +80,34 @@ fn refresh_error_marker(error: Option<&str>, p: Palette) -> Element<'_, Message>
             .style(style::panel(p, Panel::Console)),
         tooltip::Position::Right,
     )
+    .into()
+}
+
+/// The row under a long worktree list: "Show N more" while some are hidden,
+/// "Show fewer" once the whole list is shown.
+fn show_more_button(project: ProjectId, hidden: usize, p: Palette) -> Element<'static, Message> {
+    let (icon, label, show_all) = if hidden > 0 {
+        (
+            icons::chevron_down(12, p.muted()),
+            format!("Show {hidden} more"),
+            true,
+        )
+    } else {
+        (
+            icons::chevron_up(12, p.muted()),
+            "Show fewer".to_owned(),
+            false,
+        )
+    };
+    button(
+        row![icon, text(label).size(11).color(p.muted())]
+            .spacing(5)
+            .align_y(Center),
+    )
+    .width(Fill)
+    .padding([2, 5])
+    .style(style::button(p, Button::Nav))
+    .on_press(Message::ShowAllWorktrees(project, show_all))
     .into()
 }
 
@@ -263,6 +291,7 @@ impl App {
                     project: project.id,
                     worktree: None,
                 },
+                project.unavailable_worktrees().len(),
                 p,
             )]
             .spacing(2)
@@ -283,9 +312,10 @@ impl App {
                     .color(p.muted()),
                 );
             }
-            for tree in project.worktrees() {
-                let active =
-                    selection.and_then(|s| s.worktree.as_deref()) == Some(tree.path.as_path());
+            let selected_path = selection.and_then(|s| s.worktree.as_deref());
+            let listing = project.sidebar_rows(selected_path);
+            for tree in listing.rows {
+                let active = selected_path == Some(tree.path.as_path());
                 let pr = project.pull_request(&tree.path);
                 let session = project.session_badge(&tree.path);
                 let mut label = row![
@@ -338,10 +368,13 @@ impl App {
                 } else {
                     self.rename_editor(&target, tree.label(), true)
                 };
-                children = children.push(with_row_menu(base, target, p));
+                children = children.push(with_row_menu(base, target, 0, p));
                 if let Some(editor) = editor {
                     children = children.push(editor);
                 }
+            }
+            if listing.collapsible {
+                children = children.push(show_more_button(project.id, listing.hidden, p));
             }
             // Indent worktrees under their project so the hierarchy reads at a glance.
             groups.push((
@@ -371,7 +404,14 @@ impl App {
         container(
             column![
                 toolbar,
-                scrollable(list).width(Fill).height(Fill),
+                // No visible scrollbar: it overlapped the row ⋮ menus. The list
+                // still scrolls with the wheel and trackpad.
+                scrollable(list)
+                    .direction(scrollable::Direction::Vertical(
+                        scrollable::Scrollbar::hidden(),
+                    ))
+                    .width(Fill)
+                    .height(Fill),
                 settings_button(p),
             ]
             .spacing(5),

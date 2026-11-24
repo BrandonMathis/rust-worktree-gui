@@ -36,7 +36,7 @@ class StatesTest < Minitest::Test
   end
 
   def test_a_sidebar_change_gets_the_default_and_minimum_window_screenshots
-    assert_equal %w[01-workspace 03-compact], selected("src/app/sidebar.rs", "src/app/update.rs")
+    assert_equal %w[01-workspace 03-compact 05-long-list], selected("src/app/sidebar.rs", "src/app/update.rs")
   end
 
   def test_a_style_change_gets_every_screenshot

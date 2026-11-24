@@ -177,6 +177,11 @@ impl Palette {
         mix(self.background, self.selection, 0.2)
     }
 
+    /// The dimmed backdrop behind a modal.
+    pub fn scrim(&self) -> Color {
+        self.deepen(self.background, 0.6).scale_alpha(0.6)
+    }
+
     /// The iced theme that built-in widgets (text inputs, pick lists,
     /// scrollbars, tooltips) derive their colors from.
     pub fn iced_theme(&self) -> iced::Theme {

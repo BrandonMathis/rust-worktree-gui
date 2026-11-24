@@ -9,8 +9,9 @@ use iced::widget::{Svg, button, container, hover, text, tooltip};
 use iced::{Element, Fill};
 
 /// The actions offered in a sidebar row's ⋮ menu, for a worktree
-/// (`worktree == true`) or a project.
-pub(super) fn menu_actions(worktree: bool) -> Vec<MenuAction> {
+/// (`worktree == true`) or a project. A project with `unavailable` worktrees
+/// (hidden from the sidebar) also gets an item that lists them.
+pub(super) fn menu_actions(worktree: bool, unavailable: usize) -> Vec<MenuAction> {
     let mut actions = Vec::new();
     if !worktree {
         actions.push(MenuAction::NewWorktree);
@@ -19,20 +20,25 @@ pub(super) fn menu_actions(worktree: bool) -> Vec<MenuAction> {
     if worktree {
         actions.push(MenuAction::RenameWorktree);
     } else {
+        if unavailable > 0 {
+            actions.push(MenuAction::UnavailableWorktrees(unavailable));
+        }
         actions.extend([MenuAction::ReplaceAnchor, MenuAction::RemoveProject]);
     }
     actions
 }
 
 /// Overlays the ⋮ row menu on the right edge of `base` while it is hovered.
+/// `unavailable` counts a project's unavailable worktrees (0 for a worktree row).
 pub(super) fn with_row_menu<'a>(
     base: impl Into<Element<'a, Message>>,
     target: Selection,
+    unavailable: usize,
     p: Palette,
 ) -> Element<'a, Message> {
     let menu = row_menu::show(
         format!("{target:?}"),
-        menu_actions(target.worktree.is_some()),
+        menu_actions(target.worktree.is_some(), unavailable),
         move |action| Message::MenuAction(target.clone(), action),
         p,
     );

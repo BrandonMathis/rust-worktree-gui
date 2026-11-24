@@ -20,9 +20,18 @@ ruby scripts/dependency_health.rb                    # out-of-date / out-of-supp
 ruby scripts/test/dependency_health_test.rb          # tests for that report
 ruby script/capture/test/states_test.rb              # tests for which screenshot states a PR gets
 ruby .agents/skills/new-release/test/version_bump_test.rb  # tests for how a release picks its version bump (local; not in CI)
+ruby scripts/latency.rb                              # keystroke latency, HEAD vs origin/main (builds both; ~5 min)
+ruby scripts/test/latency_test.rb                    # tests for the latency comparison rules
+cargo test --locked --features perf perf::           # tests for the latency harness
 ```
 
 `vendor/iced_term` is a workspace member and a default member, so `cargo test`, `cargo clippy` and `cargo llvm-cov` run its tests and lints too; `cargo fmt` needs `--all` to include it. Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
+
+## Keystroke latency
+
+`.github/workflows/latency.yml` measures how long a key press takes to change the pixels on screen, on every PR, and fails the check when the PR is significantly slower than its base (NFR-11). The harness is built into the app behind `--features perf` (`src/perf/`, off in normal builds): it runs the real `App` headlessly, presses keys through iced's widget tree, and renders every frame offscreen until its pixels change. The terminal runs a tiny line editor (`src/perf/echo.rs`) instead of tmux, so the number is the app's own pipeline. `scripts/latency.rb` builds base and head and runs them in turns on one machine, which is the only fair comparison. The rules (15% or 3σ, only when significant and seen in every round) are in that script.
+
+Run it before and after a change that touches input handling, `App::view`/`update`, the terminal widget or drawing: `ruby scripts/latency.rb` (or `--base-ref <rev>`; `--from target/latency` re-reads a run). Absolute numbers depend on the machine and its load; only the comparison means anything. When you add a keyboard-driven feature, add a scenario in `src/perf/scenarios.rs`. Results land in `target/latency/`; never commit them.
 
 ## Requirements are the spec
 
@@ -34,7 +43,7 @@ ruby .agents/skills/new-release/test/version_bump_test.rb  # tests for how a rel
 
 ## Screenshots
 
-`.github/workflows/screenshots.yml` posts screenshots on PRs that change how the app looks, of only the states that show the files the PR changes. Dependency updates (`Cargo.toml`, `Cargo.lock`) and changes no state shows get none. The PNGs are workflow artifacts that the PR comment links to; never commit them or push them to a branch. It builds with `--features capture` (startup hooks in `src/capture.rs`, off in normal builds) and runs `script/capture/capture.rb`, which creates fixture repos, a private tmux server with vim and shell splits, and an isolated `HOME`. It never touches your bookmarks, tmux sessions or dotfiles. Run it locally to check a visual change (a window appears briefly; your terminal needs Screen Recording permission):
+`.github/workflows/screenshots.yml` posts screenshots on PRs that change how the app looks, of only the states that show the files the PR changes. Dependency updates (`Cargo.toml`, `Cargo.lock`) and changes no state shows get none. The PR comment shows the PNGs inline from assets of the `pr-screenshots` prerelease, because a comment can only show an image anyone can fetch (workflow artifacts need a sign-in); never commit them or push them to a branch. It builds with `--features capture` (startup hooks in `src/capture.rs`, off in normal builds) and runs `script/capture/capture.rb`, which creates fixture repos, a private tmux server with vim and shell splits, and an isolated `HOME`. It never touches your bookmarks, tmux sessions or dotfiles. Run it locally to check a visual change (a window appears briefly; your terminal needs Screen Recording permission):
 
 ```sh
 cargo build --locked --features capture && ruby script/capture/capture.rb   # PNGs in target/screenshots
@@ -56,6 +65,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `app/sessions.rs` | tmux session badges (live, new output, bell) from a background `list-windows -a` poll. |
 | `app/auto_refresh.rs`, `watch.rs` | Automatic refresh on window focus and when a repository's Git metadata fingerprint changes (polled with `stat`). |
 | `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, switching the running client to another worktree (`switch-client`, with a full-connect fallback), and the header status and pane. |
+| `app/unavailable.rs` | The modal listing a project's unavailable worktrees (hidden from the sidebar), opened from the project's ⋮ menu. |
 | `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
 | `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |
 | `app/tests.rs` | State-machine tests driven through `App::update`. |
@@ -72,6 +82,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `create.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`. |
 | `confirmation.rs`, `quit.rs` | Native confirmation sheets and the macOS quit shortcut. |
 | `backdrop.rs` | The macOS behind-window blur: an `NSVisualEffectView` under the content, so it ends on the window's rounded corners (winit's `blur` doesn't). |
+| `perf/` | Keystroke-latency harness (`--features perf` only): headless event loop around `App`, scenarios, and the line editor the terminal runs. `app/perf.rs` holds its `App` hooks. |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
 
 `vendor/iced_term` is a patched copy of `iced_term` 0.8.0 (via `[patch.crates-io]`). It adds things such as an explicit `cell_size` so the grid matches Alacritty's metrics. Keep patches minimal, and note why in the code you touch there.

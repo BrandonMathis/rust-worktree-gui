@@ -133,6 +133,14 @@ pub fn panel(p: Palette, kind: Panel) -> impl Fn(&Theme) -> container::Style {
     panel_in(p, kind, Corners::NONE)
 }
 
+/// The dimmed backdrop behind a modal, so the app beneath reads as inactive.
+pub fn scrim(p: Palette) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(p.scrim().into()),
+        ..container::Style::default()
+    }
+}
+
 /// A panel that may sit in a bottom corner of the window. See [`Corners`].
 pub fn panel_in(p: Palette, kind: Panel, corners: Corners) -> impl Fn(&Theme) -> container::Style {
     move |_| {
