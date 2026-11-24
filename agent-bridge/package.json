@@ -1,0 +1,19 @@
+{
+  "name": "worktree-browser-agent-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sidecar for Worktree Browser's managed worktrees: drives the Claude, Codex and Pi SDKs and reports their activity as JSON lines.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.331",
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@openai/codex-sdk": "0.172.0"
+  }
+}

@@ -1,4 +1,4 @@
-//! One place to find and run external tools (`git`, `tmux`, `gh`, `open`).
+//! One place to find and run external tools (`git`, `tmux`, `gh`, `open`, `node`).
 //!
 //! Every subprocess the app starts goes through [`command`] and [`run`], so they all:
 //! - are found the same way ([`find`]): `PATH`, then the usual Homebrew and MacPorts
@@ -68,6 +68,10 @@ pub enum Tool {
     Git,
     Tmux,
     Gh,
+    /// Runs the agent bridge for managed worktrees (`agent_bridge.rs`).
+    Node,
+    /// Installs the bridge's SDKs.
+    Npm,
 }
 
 impl Tool {
@@ -76,6 +80,8 @@ impl Tool {
             Self::Git => "git",
             Self::Tmux => "tmux",
             Self::Gh => "gh",
+            Self::Node => "node",
+            Self::Npm => "npm",
         }
     }
 
@@ -83,7 +89,8 @@ impl Tool {
     fn override_var(self) -> Option<&'static str> {
         match self {
             Self::Tmux => Some("WORKTREE_BROWSER_TMUX"),
-            Self::Git | Self::Gh => None,
+            Self::Node => Some("WORKTREE_BROWSER_NODE"),
+            Self::Git | Self::Gh | Self::Npm => None,
         }
     }
 
@@ -92,6 +99,9 @@ impl Tool {
             Self::Git => "Install the Xcode Command Line Tools or `brew install git`.",
             Self::Tmux => "Install it with `brew install tmux`.",
             Self::Gh => "Install it with `brew install gh`.",
+            Self::Node | Self::Npm => {
+                "Managed worktrees need Node.js 22.19 or newer. Install it with `brew install node`."
+            }
         }
     }
 }

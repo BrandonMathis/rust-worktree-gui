@@ -115,6 +115,23 @@ jobs:
           path: lcov.info
           if-no-files-found: ignore
 
+  bridge:
+    name: Agent bridge
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The normalizers import no SDK, so the runner's own Node.js runs the
+      # tests with nothing installed.
+      - run: node --test
+        working-directory: agent-bridge
+      # The lockfile is what users install: it must match package.json.
+      - run: npm ci --ignore-scripts --omit=optional --dry-run
+        working-directory: agent-bridge
+
   deny:
     name: Dependencies
     runs-on: ubuntu-latest

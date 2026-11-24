@@ -1,4 +1,6 @@
 mod actions;
+mod agent;
+mod agent_bridge;
 mod app;
 mod backdrop;
 #[cfg(feature = "capture")]

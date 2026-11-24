@@ -1,7 +1,7 @@
 use crate::git::Checkout;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, BufReader, Write};
@@ -16,6 +16,8 @@ pub struct Store {
 pub struct ProjectBookmark {
     pub checkout: Checkout,
     pub worktree_names: BTreeMap<PathBuf, String>,
+    /// Worktrees opened with a managed agent instead of a terminal.
+    pub managed: BTreeSet<PathBuf>,
 }
 
 impl From<Checkout> for ProjectBookmark {
@@ -23,6 +25,7 @@ impl From<Checkout> for ProjectBookmark {
         Self {
             checkout,
             worktree_names: BTreeMap::new(),
+            managed: BTreeSet::new(),
         }
     }
 }
@@ -33,6 +36,8 @@ struct Bookmark {
     common_dir: StoredPath,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     worktree_names: Vec<WorktreeName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    managed_worktrees: Vec<StoredPath>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -108,6 +113,11 @@ impl Store {
                     .into_iter()
                     .map(|entry| (entry.path.into(), entry.name))
                     .collect(),
+                managed: bookmark
+                    .managed_worktrees
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .collect(),
             });
         }
         Ok(projects)
@@ -126,6 +136,11 @@ impl Store {
                         path: path.as_path().into(),
                         name,
                     })
+                    .collect(),
+                managed_worktrees: project
+                    .managed
+                    .iter()
+                    .map(|path| path.as_path().into())
                     .collect(),
             })
             .collect();
@@ -184,6 +199,35 @@ mod tests {
         assert_eq!(store.load().unwrap(), [project]);
         store.save([]).unwrap();
         assert!(store.load().unwrap().is_empty());
+    }
+
+    #[test]
+    fn managed_worktrees_are_saved_with_their_bookmark() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store {
+            path: tmp.path().join("projects.json"),
+        };
+        let mut project = ProjectBookmark::from(Checkout {
+            root: tmp.path().join("repo"),
+            common_dir: tmp.path().join("repo/.git"),
+        });
+        let odd = tmp
+            .path()
+            .join(OsString::from_vec(b"agent tree\n\xff".to_vec()));
+        project.managed = [tmp.path().join("agent"), odd].into();
+        store.save([project.clone()]).unwrap();
+        assert_eq!(store.load().unwrap(), [project.clone()]);
+
+        // Bookmarks written before managed worktrees existed still load, and
+        // a project without any keeps the old file format.
+        project.managed.clear();
+        store.save([project.clone()]).unwrap();
+        assert!(
+            !fs::read_to_string(&store.path)
+                .unwrap()
+                .contains("managed_worktrees")
+        );
+        assert_eq!(store.load().unwrap(), [project]);
     }
 
     #[test]

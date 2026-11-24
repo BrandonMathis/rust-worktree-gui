@@ -24,6 +24,15 @@ How this is configured (`.github/dependabot.yml`):
 
 Patch releases still arrive in two ways: through a security update, or as part of a deliberate `cargo update -p <crate>`, which you then review in `Cargo.lock`. CI always builds with `--locked`, so nothing moves without a commit.
 
+## Agent SDKs (npm)
+
+Managed worktrees run a Node.js sidecar (`agent-bridge/`) that uses three npm packages: `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk` and `@earendil-works/pi-coding-agent` (with `@earendil-works/pi-ai`). They are the only npm dependencies, and they follow the same policy as the crates:
+
+- `package.json` pins exact versions, and `package-lock.json` records every transitive package with its checksum. The lockfile is compiled into the app.
+- Nothing is installed until the user clicks **Install Agent SDKs**. The app then runs `npm ci --omit=dev --ignore-scripts` against that lockfile: exactly the locked versions, checksums verified, and no package install scripts run.
+- Dependabot covers `/agent-bridge` with the same rules as Cargo: minor and major updates after the cooldown, patches only as security updates.
+- The SDKs run coding agents that execute commands in the worktree by design. What each may do without asking is in `docs/frd/FRD-10-managed-worktrees.md` (MGD-12). Links in an agent's reply are opened only if they are plain `https://` URLs.
+
 ## Automated checks
 
 | Check | Where | When | Guards against |

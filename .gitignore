@@ -1,4 +1,6 @@
 /target/
+# The agent bridge's SDKs: installed with `npm ci`, never committed.
+/agent-bridge/node_modules/
 .DS_Store
 # Project skills live in .agents/skills. Track the .claude/skills symlink to them
 # (Claude Code reads that path) and keep the rest of .claude ignored, overriding

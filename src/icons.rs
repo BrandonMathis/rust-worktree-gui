@@ -89,6 +89,28 @@ icon!(
     r#"<path d="M10 3a7 7 0 1 0 0 14c1.2 0 1.6-.9 1.2-1.8-.5-1 .1-2.2 1.3-2.2H15a2.5 2.5 0 0 0 2.5-2.5C17.5 6.3 14.2 3 10 3z"/><circle cx="6.5" cy="9" r=".8"/><circle cx="9" cy="6.3" r=".8"/><circle cx="12.6" cy="6.8" r=".8"/>"#
 );
 
+// Managed worktrees. A four-point spark marks a worktree run by an agent.
+icon!(
+    agent,
+    r#"<path d="M10 3l1.8 5.2L17 10l-5.2 1.8L10 17l-1.8-5.2L3 10l5.2-1.8z"/>"#
+);
+// The three harnesses, drawn as plain glyphs rather than their logos: a
+// burst of rays, code brackets, and the letter pi.
+icon!(
+    claude,
+    r#"<path d="M10 3v14M3 10h14M5 5l10 10M15 5 5 15"/>"#
+);
+icon!(
+    codex,
+    r#"<path d="m7 6-4 4 4 4M13 6l4 4-4 4M11.5 4.5l-3 11"/>"#
+);
+icon!(
+    pi,
+    r#"<path d="M4 6h12M7.5 6v9M12.5 6v7.5q0 1.5 1.5 1.5h.5"/>"#
+);
+icon!(check, r#"<path d="m4.5 10.5 3.5 3.5 7.5-8"/>"#);
+icon!(close, r#"<path d="m5 5 10 10M15 5 5 15"/>"#);
+
 // tmux session badges on the right of a sidebar worktree row. The SVG `fill`
 // is tinted by the style color like the strokes, so a filled dot stays a dot.
 // A live session with nothing new: a small ring.

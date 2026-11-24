@@ -223,7 +223,7 @@ impl App {
         })
     }
 
-    /// A selected worktree: its one-row header and the terminal pane.
+    /// A selected worktree: its one-row header and the terminal or agent pane.
     fn worktree_workspace<'a>(
         &'a self,
         project: &'a Project,
@@ -271,7 +271,14 @@ impl App {
             worktree: Some(tree.path.clone()),
         };
         let editor = self.rename_editor(&target, tree.label(), false);
-        let (terminal_status, body) = self.terminal_pane(tree, corners);
+        // A managed worktree shows its agent; an unavailable one explains
+        // itself through the terminal pane either way.
+        let managed = project.is_managed(&tree.path);
+        let (terminal_status, body) = if managed && tree.unavailable_reason().is_none() {
+            self.agent_pane(tree)
+        } else {
+            self.terminal_pane(tree, corners)
+        };
         let heading = row![self.show_sidebar_button(), title, terminal_status, actions]
             .spacing(4)
             .align_y(Center);

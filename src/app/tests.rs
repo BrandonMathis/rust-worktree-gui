@@ -772,16 +772,17 @@ fn rename_validates_input_and_cancel_discards_the_draft() {
 fn row_menu_offers_the_worktree_and_project_actions() {
     use DirectoryAction::*;
     assert_eq!(
-        menu_actions(true, 0),
+        menu_actions(MenuTarget::Worktree { managed: false }),
         [
             MenuAction::Directory(Finder),
             MenuAction::Directory(VsCode),
             MenuAction::Directory(CopyPath),
             MenuAction::RenameWorktree,
+            MenuAction::UseAgent,
         ]
     );
     assert_eq!(
-        menu_actions(false, 0),
+        menu_actions(MenuTarget::Project { unavailable: 0 }),
         [
             MenuAction::NewWorktree,
             MenuAction::Directory(Finder),
@@ -1207,9 +1208,12 @@ fn unavailable_worktrees_leave_the_sidebar_for_a_list_in_the_project_menu() {
     assert!(sidebar_listing(&app, &missing[1]).0.contains(&missing[1]));
 
     // The project menu counts them; worktree menus don't offer the item.
-    assert!(menu_actions(false, 3).contains(&MenuAction::UnavailableWorktrees(3)));
     assert!(
-        !menu_actions(false, 0)
+        menu_actions(MenuTarget::Project { unavailable: 3 })
+            .contains(&MenuAction::UnavailableWorktrees(3))
+    );
+    assert!(
+        !menu_actions(MenuTarget::Project { unavailable: 0 })
             .iter()
             .any(|a| matches!(a, MenuAction::UnavailableWorktrees(_)))
     );
@@ -1252,4 +1256,551 @@ fn unavailable_worktrees_leave_the_sidebar_for_a_list_in_the_project_menu() {
         true,
     ));
     assert_eq!(app.unavailable_list, None);
+}
+
+// --- Managed worktrees -------------------------------------------------------
+
+use crate::agent::{Command, Event, Harness, Item, Model, Models, ToolStatus, TurnStatus};
+use crate::agent_bridge::{Bridge, Prepared, Update};
+use iced::futures::channel::mpsc::UnboundedReceiver;
+use managed::{AgentBadge, BridgeState, ManagedMessage, ModelList, Run, ThinkingChoice};
+
+fn models(default: &str, entries: &[(&str, &[&str], Option<&str>)]) -> Models {
+    Models {
+        default_model: Some(default.into()),
+        models: entries
+            .iter()
+            .map(|(id, thinking, default_thinking)| Model {
+                id: (*id).into(),
+                name: id.to_uppercase(),
+                description: String::new(),
+                thinking: thinking.iter().map(|level| (*level).into()).collect(),
+                default_thinking: default_thinking.map(Into::into),
+            })
+            .collect(),
+    }
+}
+
+/// The linked checkout of `app_with_linked_checkout`, marked managed and
+/// selected, with the bridge installed and Claude's models loaded.
+fn app_with_managed_worktree() -> (tempfile::TempDir, App, ProjectId, PathBuf, PathBuf) {
+    let (tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    app.set_managed(id, &linked, true).unwrap();
+    app.managed.bridge = BridgeState::Ready(Bridge::fake());
+    app.managed.models.insert(
+        Harness::Claude,
+        ModelList::Ready(models(
+            "sonnet",
+            &[
+                ("opus", &["low", "high"], None),
+                ("sonnet", &["low", "high"], None),
+            ],
+        )),
+    );
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    (tmp, app, id, root, linked)
+}
+
+fn managed(message: ManagedMessage) -> Message {
+    Message::Managed(message)
+}
+
+/// Types `text` into the selected session's prompt editor.
+fn type_prompt(app: &mut App, text: &str) {
+    use iced::widget::text_editor::{Action, Edit};
+    let paste = Action::Edit(Edit::Paste(std::sync::Arc::new(text.to_owned())));
+    let _ = app.update(managed(ManagedMessage::Edit(paste)));
+}
+
+fn submit(app: &mut App, text: &str) -> Task<Message> {
+    type_prompt(app, text);
+    app.update(managed(ManagedMessage::Submit))
+}
+
+/// The commands sent to the bridge since the last call.
+fn sent(commands: &mut UnboundedReceiver<Command>) -> Vec<Command> {
+    std::iter::from_fn(|| commands.try_recv().ok()).collect()
+}
+
+fn prompt(text: &str) -> Command {
+    Command::Prompt { text: text.into() }
+}
+
+fn turn_end(app: &mut App, path: &Path, status: TurnStatus) {
+    let id = app.managed.sessions[path].id();
+    let event = Event::TurnEnd {
+        status,
+        error: None,
+    };
+    let _ = app.update(managed(ManagedMessage::Bridge(
+        path.to_path_buf(),
+        id,
+        Update::Event(event),
+    )));
+}
+
+fn user_prompts(app: &App, path: &Path) -> Vec<String> {
+    app.managed.sessions[path]
+        .transcript
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            Item::User(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_new_managed_worktree_opens_the_agent_prompt_instead_of_a_terminal() {
+    let (tmp, mut app, id, root, _linked) = app_with_linked_checkout();
+    let config = tmp.path().join("config/projects.json");
+    let _ = app.update(Message::NewWorktree(id));
+    assert!(
+        !app.creation.as_ref().unwrap().managed,
+        "terminal by default"
+    );
+    let _ = app.update(Message::Creation(create::Message::Managed(true)));
+
+    let checkout = app.projects[0].checkout.clone();
+    let destination = root.with_file_name("agent tree");
+    let created = git::add_worktree(&checkout, &root, "agent-work", &destination, "HEAD");
+    let path = created.clone().unwrap();
+    let _ = app.update(Message::WorktreeCreated(id, created));
+    assert!(app.creation.is_none());
+    assert!(
+        Store::open_path(config.clone()).unwrap().1[0]
+            .managed
+            .contains(&path),
+        "the choice is saved with the bookmark"
+    );
+
+    let refresh_id = app.projects[0].refresh_id.unwrap();
+    let _ = app.update(Message::Refreshed(refresh_id, git::inventory(&checkout)));
+    assert_eq!(
+        app.selection.as_ref().unwrap().worktree.as_deref(),
+        Some(path.as_path())
+    );
+    assert!(
+        matches!(app.console, ConsoleState::Detached),
+        "no tmux session is started"
+    );
+    let session = &app.managed.sessions[&path];
+    assert!(matches!(session.run, Run::New));
+    assert!(session.transcript.is_empty());
+    assert!(matches!(app.managed.bridge, BridgeState::Checking));
+
+    // After a restart the worktree is still managed.
+    let (restarted, _) = App::from_bookmarks(Store::open_path(config));
+    assert!(restarted.projects[0].is_managed(&path));
+}
+
+#[test]
+fn a_worktree_switches_between_terminal_and_agent_without_stopping_either() {
+    let (_tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+    let target = Selection {
+        project: id,
+        worktree: Some(linked.clone()),
+    };
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    assert!(matches!(app.console, ConsoleState::Connecting(_)));
+
+    let _ = app.update(Message::MenuAction(target.clone(), MenuAction::UseAgent));
+    assert!(app.projects[0].is_managed(&linked));
+    assert!(matches!(app.console, ConsoleState::Detached));
+    assert!(app.managed.sessions.contains_key(&linked));
+    assert_eq!(
+        menu_actions(MenuTarget::Worktree { managed: true }).last(),
+        Some(&MenuAction::UseTerminal)
+    );
+    // Clicking the managed worktree again never connects a terminal.
+    let _ = app.update(Message::Reconnect);
+    assert!(matches!(app.console, ConsoleState::Detached));
+
+    let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(true);
+    let _ = app.update(Message::MenuAction(target, MenuAction::UseTerminal));
+    assert!(!app.projects[0].is_managed(&linked));
+    assert!(matches!(app.console, ConsoleState::Connecting(_)));
+    // The agent's conversation is kept and keeps running.
+    assert!(app.managed.sessions[&linked].working());
+    assert!(sent(&mut commands).is_empty());
+}
+
+#[test]
+fn agent_sdks_are_installed_only_when_asked_and_models_load_once_ready() {
+    let (_tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+    app.set_managed(id, &linked, true).unwrap();
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    assert!(matches!(app.managed.bridge, BridgeState::Checking));
+
+    let _ = app.update(managed(ManagedMessage::Prepared(Ok(
+        Prepared::NeedsInstall,
+    ))));
+    assert!(matches!(app.managed.bridge, BridgeState::NeedsInstall));
+    assert!(
+        app.managed.models.is_empty(),
+        "nothing runs before the install"
+    );
+    // A prompt can't be sent until the SDKs are there.
+    assert_eq!(submit(&mut app, "hello").units(), 0);
+    assert!(app.managed.sessions[&linked].transcript.is_empty());
+    assert_eq!(app.managed.sessions[&linked].draft(), "hello");
+
+    assert_eq!(app.update(managed(ManagedMessage::Install)).units(), 1);
+    assert!(matches!(app.managed.bridge, BridgeState::Installing));
+    assert_eq!(app.update(managed(ManagedMessage::Install)).units(), 0);
+    let _ = app.update(managed(ManagedMessage::Installed(Err("offline".into()))));
+    assert!(matches!(&app.managed.bridge, BridgeState::Failed(error) if error == "offline"));
+
+    // "Try again" checks from the start.
+    assert_eq!(app.update(managed(ManagedMessage::Install)).units(), 1);
+    assert!(matches!(app.managed.bridge, BridgeState::Checking));
+    let ready = Prepared::Ready(Bridge::fake());
+    let load = app.update(managed(ManagedMessage::Prepared(Ok(ready))));
+    assert_eq!(
+        load.units(),
+        1,
+        "the selected harness's models are requested"
+    );
+    let Some(ModelList::Loading(request)) = app.managed.models.get(&Harness::Claude) else {
+        panic!("Claude's models should be loading");
+    };
+    let request = *request;
+
+    // An answer to an older request is ignored.
+    let list = models("m", &[("m", &[], None)]);
+    let _ = app.update(managed(ManagedMessage::ModelsListed(
+        Harness::Claude,
+        request + 1,
+        Ok(list.clone()),
+    )));
+    assert!(matches!(
+        app.managed.models[&Harness::Claude],
+        ModelList::Loading(_)
+    ));
+    let _ = app.update(managed(ManagedMessage::ModelsListed(
+        Harness::Claude,
+        request,
+        Ok(list),
+    )));
+    assert!(matches!(
+        app.managed.models[&Harness::Claude],
+        ModelList::Ready(_)
+    ));
+    // Loaded models are not requested again.
+    assert_eq!(
+        app.update(managed(ManagedMessage::Harness(Harness::Claude)))
+            .units(),
+        0
+    );
+}
+
+#[test]
+fn the_first_prompt_starts_the_chosen_harness_model_and_thinking_level() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    // Defaults: the harness's default model, at its own thinking level.
+    let claude = models("sonnet", &[("sonnet", &["low", "high"], None)]);
+    assert_eq!(
+        app.managed.sessions[&linked].start_command(Some(&claude)),
+        Command::Start {
+            harness: Harness::Claude,
+            model: Some("sonnet".into()),
+            thinking: None,
+            thinking_summaries: true,
+        }
+    );
+
+    // Picking another harness loads its models and forgets the Claude choices.
+    let _ = app.update(managed(ManagedMessage::Model(claude.models[0].clone())));
+    let load = app.update(managed(ManagedMessage::Harness(Harness::Codex)));
+    assert_eq!(load.units(), 1);
+    let Some(ModelList::Loading(request)) = app.managed.models.get(&Harness::Codex) else {
+        panic!("Codex's models should be loading");
+    };
+    let codex = models(
+        "gpt-a",
+        &[
+            ("gpt-a", &["low", "medium"], Some("medium")),
+            ("gpt-b", &[], None),
+        ],
+    );
+    let _ = app.update(managed(ManagedMessage::ModelsListed(
+        Harness::Codex,
+        *request,
+        Ok(codex.clone()),
+    )));
+    assert_eq!(app.managed.sessions[&linked].model, None);
+
+    let _ = app.update(managed(ManagedMessage::Thinking(ThinkingChoice::Level(
+        "low".into(),
+    ))));
+    assert_eq!(
+        app.managed.sessions[&linked].start_command(Some(&codex)),
+        Command::Start {
+            harness: Harness::Codex,
+            model: Some("gpt-a".into()),
+            thinking: Some("low".into()),
+            thinking_summaries: true,
+        }
+    );
+    // Thinking levels belong to a model, so changing the model resets the level.
+    let _ = app.update(managed(ManagedMessage::Model(codex.models[1].clone())));
+    assert_eq!(
+        app.managed.sessions[&linked].start_command(Some(&codex)),
+        Command::Start {
+            harness: Harness::Codex,
+            model: Some("gpt-b".into()),
+            thinking: None,
+            thinking_summaries: false,
+        }
+    );
+
+    assert_eq!(
+        submit(&mut app, "  \n ").units(),
+        0,
+        "an empty prompt is not sent"
+    );
+    let start = submit(&mut app, "Fix the flaky test");
+    assert_eq!(start.units(), 1, "the bridge session starts");
+    let session = &app.managed.sessions[&linked];
+    assert!(session.working());
+    assert_eq!(session.draft(), "", "the composer is cleared");
+    assert_eq!(user_prompts(&app, &linked), ["Fix the flaky test"]);
+
+    // The harness and model are fixed once the conversation has started.
+    let _ = app.update(managed(ManagedMessage::Harness(Harness::Pi)));
+    let _ = app.update(managed(ManagedMessage::Model(codex.models[0].clone())));
+    let session = &app.managed.sessions[&linked];
+    assert_eq!(session.harness, Harness::Codex);
+    assert_eq!(session.model.as_deref(), Some("gpt-b"));
+}
+
+#[test]
+fn follow_ups_wait_for_the_running_turn_and_go_in_one_at_a_time() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(true);
+
+    // Sent while the agent works: queued, in order, and not sent yet.
+    for follow_up in ["second", "third"] {
+        assert_eq!(submit(&mut app, follow_up).units(), 0);
+    }
+    assert_eq!(app.managed.sessions[&linked].queue, ["second", "third"]);
+    assert!(sent(&mut commands).is_empty());
+    assert!(user_prompts(&app, &linked).is_empty());
+
+    // Each turn end releases exactly one, and the agent stays busy.
+    turn_end(&mut app, &linked, TurnStatus::Done);
+    assert_eq!(sent(&mut commands), [prompt("second")]);
+    assert_eq!(app.managed.sessions[&linked].queue, ["third"]);
+    assert!(app.managed.sessions[&linked].working());
+
+    // A queued follow-up can be withdrawn before its turn.
+    let _ = submit(&mut app, "fourth");
+    let _ = app.update(managed(ManagedMessage::Unqueue(0)));
+    assert_eq!(app.managed.sessions[&linked].queue, ["fourth"]);
+
+    // An interrupted or failed turn is over too: the next one still goes in.
+    turn_end(&mut app, &linked, TurnStatus::Interrupted);
+    assert_eq!(sent(&mut commands), [prompt("fourth")]);
+    turn_end(&mut app, &linked, TurnStatus::Done);
+    assert!(sent(&mut commands).is_empty());
+    assert!(!app.managed.sessions[&linked].working());
+    assert_eq!(user_prompts(&app, &linked), ["second", "fourth"]);
+
+    // With the agent idle, a prompt goes straight in.
+    let _ = submit(&mut app, "fifth");
+    assert_eq!(sent(&mut commands), [prompt("fifth")]);
+    assert!(app.managed.sessions[&linked].working());
+    assert!(app.managed.sessions[&linked].queue.is_empty());
+}
+
+#[test]
+fn stop_interrupts_only_a_running_turn() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
+    let _ = app.update(managed(ManagedMessage::Stop));
+    assert!(sent(&mut commands).is_empty());
+
+    let _ = submit(&mut app, "go");
+    let _ = app.update(managed(ManagedMessage::Stop));
+    assert_eq!(sent(&mut commands), [prompt("go"), Command::Interrupt]);
+    // The turn ends when the harness says so, not when Stop is pressed.
+    assert!(app.managed.sessions[&linked].working());
+    turn_end(&mut app, &linked, TurnStatus::Interrupted);
+    assert!(!app.managed.sessions[&linked].working());
+    assert!(matches!(
+        app.managed.sessions[&linked].transcript.items().last(),
+        Some(Item::Notice(text)) if text == "Stopped."
+    ));
+}
+
+#[test]
+fn agent_activity_streams_into_collapsed_rows_that_expand_on_click() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let _commands = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
+    let _ = submit(&mut app, "go");
+    let id = app.managed.sessions[&linked].id();
+    for line in [
+        r#"{"type":"thinking","id":"k","delta":"Looking around"}"#,
+        r#"{"type":"tool","id":"t","name":"Read","input":{"file_path":"a.rs"},"status":"running"}"#,
+        r#"{"type":"tool","id":"t","status":"done","output":"fn main() {}"}"#,
+        r#"{"type":"text","id":"m","delta":"Done."}"#,
+    ] {
+        let update = Update::Event(Event::parse(line).unwrap());
+        let _ = app.update(managed(ManagedMessage::Bridge(linked.clone(), id, update)));
+    }
+    let items = app.managed.sessions[&linked].transcript.items();
+    assert!(matches!(&items[1], Item::Thinking { open: false, .. }));
+    assert!(matches!(
+        &items[2],
+        Item::Tool {
+            open: false,
+            status: ToolStatus::Done,
+            ..
+        }
+    ));
+    assert!(matches!(&items[3], Item::Text { source, .. } if source == "Done."));
+
+    let _ = app.update(managed(ManagedMessage::Toggle(2)));
+    let items = app.managed.sessions[&linked].transcript.items();
+    assert!(matches!(&items[2], Item::Tool { open: true, .. }));
+    assert!(matches!(&items[1], Item::Thinking { open: false, .. }));
+}
+
+#[test]
+fn a_new_chat_drops_the_conversation_and_ignores_its_late_events() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let opus = models("opus", &[("opus", &["high"], None)]).models[0].clone();
+    let _ = app.update(managed(ManagedMessage::Model(opus)));
+    let _commands = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
+    let _ = submit(&mut app, "go");
+    let _ = submit(&mut app, "queued");
+    let old = app.managed.sessions[&linked].id();
+
+    let _ = app.update(managed(ManagedMessage::NewChat));
+    let session = &app.managed.sessions[&linked];
+    assert!(matches!(session.run, Run::New));
+    assert!(session.transcript.is_empty());
+    assert!(session.queue.is_empty());
+    assert_eq!(
+        session.model.as_deref(),
+        Some("opus"),
+        "the model stays picked"
+    );
+    assert_ne!(session.id(), old);
+
+    // The old bridge may still report before it stops.
+    let late = Update::Event(Event::Notice {
+        text: "from the old chat".into(),
+    });
+    let _ = app.update(managed(ManagedMessage::Bridge(linked.clone(), old, late)));
+    let _ = app.update(managed(ManagedMessage::Bridge(
+        linked.clone(),
+        old,
+        Update::Exited("stopped".into()),
+    )));
+    let session = &app.managed.sessions[&linked];
+    assert!(session.transcript.is_empty());
+    assert!(matches!(session.run, Run::New));
+}
+
+#[test]
+fn a_bridge_that_stops_ends_the_turn_and_returns_queued_follow_ups() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let _commands = app.managed.sessions.get_mut(&linked).unwrap().attach(true);
+    let _ = submit(&mut app, "one");
+    let _ = submit(&mut app, "two");
+    type_prompt(&mut app, "half typed");
+    let id = app.managed.sessions[&linked].id();
+    let _ = app.update(managed(ManagedMessage::Bridge(
+        linked.clone(),
+        id,
+        Update::Exited("Out of memory".into()),
+    )));
+    let session = &app.managed.sessions[&linked];
+    assert!(matches!(session.run, Run::Ended));
+    assert!(!session.working());
+    assert!(matches!(
+        session.transcript.items().last(),
+        Some(Item::Notice(text)) if text == "Out of memory"
+    ));
+    // Nothing the user wrote is lost.
+    assert!(session.queue.is_empty());
+    assert_eq!(session.draft(), "one\n\ntwo\n\nhalf typed");
+
+    // A bridge-level error ends the turn like a failed one, and the session lives on.
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let _commands = app.managed.sessions.get_mut(&linked).unwrap().attach(true);
+    let id = app.managed.sessions[&linked].id();
+    let error = Update::Event(Event::Error {
+        message: "Pi has no model named x.".into(),
+    });
+    let _ = app.update(managed(ManagedMessage::Bridge(linked.clone(), id, error)));
+    let session = &app.managed.sessions[&linked];
+    assert!(!session.working());
+    assert!(matches!(session.run, Run::Live { .. }));
+    assert!(matches!(
+        session.transcript.items().last(),
+        Some(Item::Notice(text)) if text == "Pi has no model named x."
+    ));
+}
+
+#[test]
+fn an_agent_keeps_working_out_of_view_and_its_badge_reports_the_finished_turn() {
+    let (_tmp, mut app, id, root, linked) = app_with_managed_worktree();
+    let badge = |app: &App| app.agent_badge(&app.projects[0], &linked);
+    assert_eq!(badge(&app), Some(AgentBadge::Idle));
+    assert_eq!(app.agent_badge(&app.projects[0], &root), None);
+
+    let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
+    let _ = submit(&mut app, "long task");
+    assert_eq!(badge(&app), Some(AgentBadge::Working));
+    assert!(app.agents_working());
+
+    // Looking at another worktree neither stops nor interrupts the agent.
+    let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    assert!(app.managed.sessions[&linked].working());
+    assert_eq!(sent(&mut commands), [prompt("long task")]);
+    assert_eq!(badge(&app), Some(AgentBadge::Working));
+
+    turn_end(&mut app, &linked, TurnStatus::Done);
+    assert_eq!(badge(&app), Some(AgentBadge::Finished));
+    assert!(!app.agents_working());
+
+    // Opening the worktree marks the turn as seen.
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    assert_eq!(badge(&app), Some(AgentBadge::Idle));
+
+    // A turn that ends while the worktree is in view is never "unseen".
+    let _ = submit(&mut app, "another");
+    turn_end(&mut app, &linked, TurnStatus::Done);
+    assert_eq!(badge(&app), Some(AgentBadge::Idle));
+}
+
+#[test]
+fn an_unavailable_managed_worktree_starts_no_agent() {
+    let (_tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+    app.set_managed(id, &linked, true).unwrap();
+    std::fs::remove_dir_all(&linked).unwrap();
+    refresh_now(&mut app, id);
+    let task = app.update(Message::SelectWorktree(id, linked.clone()));
+    assert_eq!(task.units(), 0);
+    assert!(app.managed.sessions.is_empty());
+    assert!(matches!(app.managed.bridge, BridgeState::Unknown));
+    assert_eq!(submit(&mut app, "hello").units(), 0);
+}
+
+#[test]
+fn quitting_ends_agent_conversations_so_their_bridges_stop() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(true);
+    app.pending_confirmation = Some(Confirmation::Quit);
+    let quit = app.update(Message::ConfirmationAnswered(Confirmation::Quit, true));
+    assert_eq!(quit.units(), 1);
+    assert!(app.managed.sessions.is_empty());
+    // The command channel is closed: that is what tells a bridge to stop.
+    assert!(matches!(
+        commands.try_recv(),
+        Err(iced::futures::channel::mpsc::TryRecvError::Closed)
+    ));
 }

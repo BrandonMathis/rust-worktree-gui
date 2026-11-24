@@ -8,7 +8,7 @@
 
 | ID | Priority | Requirement | Verification | Status |
 | --- | --- | --- | --- | --- |
-| ACT-01 | Must | A sidebar row's **⋮** menu offers **Open in Finder**, **Open in VS Code** and **Copy Directory Path**. For a worktree it also offers **Rename Worktree**. | `row_menu_offers_the_worktree_and_project_actions`, `menu_labels_match_the_documented_actions` | Implemented |
+| ACT-01 | Must | A sidebar row's **⋮** menu offers **Open in Finder**, **Open in VS Code** and **Copy Directory Path**. For a worktree it also offers **Rename Worktree**, and **Use Managed Agent** or **Use Terminal** (MGD-02). | `row_menu_offers_the_worktree_and_project_actions`, `menu_labels_match_the_documented_actions` | Implemented |
 | ACT-02 | Must | For a worktree with a live tmux session, actions target the active pane's current directory. Otherwise they use the worktree root. In the project overview they use the anchor checkout. | `copy_path_uses_the_worktree_root_without_a_tmux_session`; Manual: `cd` into a subfolder in tmux, then **Open in Finder**. | Implemented |
 | ACT-03 | Must | Opening a missing directory shows an error instead of launching Finder or VS Code. A path that isn't valid UTF-8 can't be copied and says so. | `open_actions_report_a_missing_directory_instead_of_launching`, `copy_path_uses_the_worktree_root_without_a_tmux_session` | Implemented |
 | ACT-04 | Must | Hovering a sidebar worktree reveals a **⋮** button, the only place its actions are offered; the worktree header has no Actions menu. | `row_menu_offers_the_worktree_and_project_actions`; Manual: the header shows no Actions drop-down. | Implemented |

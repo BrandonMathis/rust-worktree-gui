@@ -166,7 +166,12 @@ impl App {
                 return Task::none();
             }
         };
-        self.creation = None;
+        let managed = self.creation.take().is_some_and(|draft| draft.managed);
+        // Remember the choice before the refresh selects the new worktree, so
+        // it opens with the agent pane rather than a terminal.
+        if managed && let Err(error) = self.set_managed(id, &path, true) {
+            self.notice = Some(error);
+        }
         if let Some(project) = self.projects.iter_mut().find(|p| p.id == id) {
             project.expanded = true;
             project.open_after_refresh = Some(path);
@@ -241,6 +246,39 @@ impl App {
                         .size(11)
                         .color(p.muted()),
                 );
+        }
+        if worktree {
+            // Two buttons acting as a radio group: the chosen one is highlighted.
+            let choice = |label: &'static str, managed: bool| {
+                button(text(label).size(12))
+                    .padding([4, 9])
+                    .style(style::button(
+                        p,
+                        if draft.managed == managed {
+                            Button::Selected
+                        } else {
+                            Button::Secondary
+                        },
+                    ))
+                    .on_press_maybe(
+                        ready.then_some(Message::Creation(create::Message::Managed(managed))),
+                    )
+            };
+            form = form.push(field(
+                "Open with",
+                row![choice("Terminal", false), choice("Managed Agent", true)]
+                    .spacing(6)
+                    .into(),
+            ));
+            form = form.push(
+                text(if draft.managed {
+                    "A managed worktree shows a prompt for Claude, Codex or Pi instead of a terminal."
+                } else {
+                    "A terminal attached to this worktree's tmux session."
+                })
+                .size(11)
+                .color(p.muted()),
+            );
         }
         let placeholder = draft.suggested_name();
         form = form.push(field(

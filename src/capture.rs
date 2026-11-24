@@ -9,6 +9,9 @@
 //!   project's inventory loads, select the worktree and connect its terminal,
 //!   exactly as a click on its sidebar row would.
 //! - `WORKTREE_BROWSER_CAPTURE_SIZE`: the initial window size, as `WIDTHxHEIGHT`.
+//! - `WORKTREE_BROWSER_CAPTURE_PROMPT`: a prompt to send in the opened worktree,
+//!   if it is a managed one, as soon as its harness's models have loaded. The
+//!   screenshot then shows a conversation instead of the empty composer.
 //! - `WORKTREE_BROWSER_CAPTURE_OPEN`: a view to show at startup. Only
 //!   `settings` (the Settings window) and `unavailable` (the first project's
 //!   unavailable worktrees) exist so far; add a variant here when a
@@ -37,6 +40,13 @@ pub fn window_size() -> Option<iced::Size> {
     let value = env::var("WORKTREE_BROWSER_CAPTURE_SIZE").ok()?;
     let (width, height) = value.split_once('x')?;
     Some(iced::Size::new(width.parse().ok()?, height.parse().ok()?))
+}
+
+/// The prompt to send in the opened managed worktree. See the module docs.
+pub fn prompt() -> Option<String> {
+    env::var("WORKTREE_BROWSER_CAPTURE_PROMPT")
+        .ok()
+        .filter(|prompt| !prompt.trim().is_empty())
 }
 
 /// A view to show at startup instead of the plain workspace.

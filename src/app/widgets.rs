@@ -8,37 +8,53 @@ use crate::{icons, row_menu};
 use iced::widget::{Svg, button, container, hover, text, tooltip};
 use iced::{Element, Fill};
 
-/// The actions offered in a sidebar row's ⋮ menu, for a worktree
-/// (`worktree == true`) or a project. A project with `unavailable` worktrees
-/// (hidden from the sidebar) also gets an item that lists them.
-pub(super) fn menu_actions(worktree: bool, unavailable: usize) -> Vec<MenuAction> {
+/// What a ⋮ menu is for: a project (with its count of unavailable worktrees,
+/// which the sidebar hides), or a worktree that shows a terminal or a managed
+/// agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MenuTarget {
+    Project { unavailable: usize },
+    Worktree { managed: bool },
+}
+
+/// The actions offered in a sidebar row's ⋮ menu. A project with
+/// unavailable worktrees also gets an item that lists them.
+pub(super) fn menu_actions(target: MenuTarget) -> Vec<MenuAction> {
     let mut actions = Vec::new();
-    if !worktree {
+    if matches!(target, MenuTarget::Project { .. }) {
         actions.push(MenuAction::NewWorktree);
     }
     actions.extend(DirectoryAction::ALL.map(MenuAction::Directory));
-    if worktree {
-        actions.push(MenuAction::RenameWorktree);
-    } else {
-        if unavailable > 0 {
-            actions.push(MenuAction::UnavailableWorktrees(unavailable));
+    match target {
+        MenuTarget::Worktree { managed } => {
+            actions.push(MenuAction::RenameWorktree);
+            // Offer the workspace the worktree isn't showing.
+            actions.push(if managed {
+                MenuAction::UseTerminal
+            } else {
+                MenuAction::UseAgent
+            });
         }
-        actions.extend([MenuAction::ReplaceAnchor, MenuAction::RemoveProject]);
+        MenuTarget::Project { unavailable } => {
+            if unavailable > 0 {
+                actions.push(MenuAction::UnavailableWorktrees(unavailable));
+            }
+            actions.extend([MenuAction::ReplaceAnchor, MenuAction::RemoveProject]);
+        }
     }
     actions
 }
 
 /// Overlays the ⋮ row menu on the right edge of `base` while it is hovered.
-/// `unavailable` counts a project's unavailable worktrees (0 for a worktree row).
 pub(super) fn with_row_menu<'a>(
     base: impl Into<Element<'a, Message>>,
     target: Selection,
-    unavailable: usize,
+    kind: MenuTarget,
     p: Palette,
 ) -> Element<'a, Message> {
     let menu = row_menu::show(
         format!("{target:?}"),
-        menu_actions(target.worktree.is_some(), unavailable),
+        menu_actions(kind),
         move |action| Message::MenuAction(target.clone(), action),
         p,
     );

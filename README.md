@@ -1,6 +1,6 @@
 # Worktree Browser
 
-A macOS workspace for Git worktrees. Click a checkout in the sidebar to open or resume its tmux session in an embedded terminal. The terminal uses Alacritty’s Rust engine via `iced_term`; it does not require the Alacritty app or open a separate window.
+A macOS workspace for Git worktrees. Click a checkout in the sidebar to open or resume its tmux session in an embedded terminal, or make a worktree *managed* and hand it to Claude, Codex or Pi from a built-in prompt. The terminal uses Alacritty’s Rust engine via `iced_term`; it does not require the Alacritty app or open a separate window.
 
 ## Run
 
@@ -16,6 +16,8 @@ The browser checks `PATH` and common macOS package manager locations. To use a s
 ```sh
 WORKTREE_BROWSER_TMUX=/opt/homebrew/bin/tmux cargo run --locked
 ```
+
+Managed worktrees also need Node.js 22.19 or newer (`brew install node`); see [Managed worktrees](#managed-worktrees). To use a specific one, set `WORKTREE_BROWSER_NODE` to its absolute path.
 
 ## Use
 
@@ -41,7 +43,19 @@ The window title shows the version (`v0.3.1`); a build that isn't a release also
 
 Click the **gear** at the bottom left of the sidebar to open **Settings**. On the **Theme** page, pick a preset (Dracula, Alucard, or a Dracula Pro variant such as Blade, Buffy, Lincoln, Morbius or Van Helsing), or click a color and drag on the wheel, move the brightness slider, or type a hex code. Changes preview live. **Save & Confirm** keeps them in `~/Library/Application Support/Worktree Browser/theme.json`; **Cancel**, Escape or clicking the gear again discards them. The theme colors the app itself; the terminal keeps your Alacritty colors.
 
-Project bookmarks and worktree display names are saved in `~/Library/Application Support/Worktree Browser/projects.json`. Worktrees added, removed or switched outside the app (including from the embedded terminal) show up within a few seconds and whenever the window gains focus; **Refresh** also re-checks every pull request. In the project row’s **⋮** menu, use **Replace Anchor** if the saved checkout is gone, or **Remove Project** to confirm removing the bookmark without touching Git, worktree files, or running tmux sessions.
+Project bookmarks, worktree display names and which worktrees are managed are saved in `~/Library/Application Support/Worktree Browser/projects.json`. Worktrees added, removed or switched outside the app (including from the embedded terminal) show up within a few seconds and whenever the window gains focus; **Refresh** also re-checks every pull request. In the project row’s **⋮** menu, use **Replace Anchor** if the saved checkout is gone, or **Remove Project** to confirm removing the bookmark without touching Git, worktree files, or running tmux sessions.
+
+## Managed worktrees
+
+A managed worktree shows a coding agent instead of a terminal. In **New Worktree…**, set **Open with** to **Managed Agent**; or switch an existing worktree by hovering its sidebar row and choosing **⋮ → Use Managed Agent** (and back with **Use Terminal**; neither stops the other).
+
+The first time, click **Install Agent SDKs**. The app drives each harness through its official SDK (the Claude Agent SDK, the Codex SDK and the Pi SDK), which it installs once with `npm ci` into `~/Library/Application Support/Worktree Browser/agent-bridge` (about 1 GB). They use the logins you already have: sign in with `claude`, `codex` or `pi` first.
+
+Then pick a harness, one of its models and a thinking level, type a task and press **Return** (Shift+Return starts a new line). While the agent works, its thinking and tool calls appear as one-line rows such as `Read src/main.rs` or `Run cargo test`; click a row to see the details. Send follow-ups at any time: one sent mid-turn is queued and goes in when the turn ends. **Stop** interrupts the turn, and **New Chat** starts over with the same harness and model.
+
+Agents keep working while you look at other worktrees. The spark on the right of a managed worktree's sidebar row turns purple while its agent works and becomes a cyan dot when a turn finished out of view. Quitting the app stops agents, and conversations aren't restored on the next launch.
+
+There is no permission prompt in the pane. Claude follows the permission mode in your Claude settings, and a tool call that would ask is declined with a note in the conversation. Codex runs in its `workspace-write` sandbox: it can change the worktree and commit, and nothing else. Pi runs its tools without asking, as it does in a terminal.
 
 ## Terminal preferences
 
@@ -58,6 +72,7 @@ cargo test --locked                                     # app and vendored iced_
 cargo doc --locked --no-deps --document-private-items   # with RUSTDOCFLAGS="-D warnings"
 cargo deny check                                        # advisories, licenses, sources
 cargo llvm-cov --locked --ignore-filename-regex vendor/ # app coverage (needs llvm-tools)
+(cd agent-bridge && node --test)                         # the agent bridge's event normalizers
 ```
 
 GitHub Actions runs all of these on every pull request and push to `main` (`.github/workflows/ci.yml`). Pull requests that change how the app looks also get a comment showing screenshots of the app states that show their changes, hosted as assets of a `pr-screenshots` prerelease rather than in the repository (`.github/workflows/screenshots.yml`; the states and the files each one shows are in `script/capture/states.rb`). To capture them locally: `cargo build --locked --features capture && ruby script/capture/capture.rb` (PNGs in `target/screenshots`; it uses fixture repos and a private tmux server, never your own). Lint levels live in `Cargo.toml` under `[lints]`, and `deny.toml` holds the dependency policy.

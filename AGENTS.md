@@ -1,6 +1,6 @@
 # Agent instructions — Worktree Browser
 
-A macOS desktop app in Rust (iced 0.14) for working across Git worktrees. Bookmark repositories, browse their worktrees, and open an embedded terminal (Alacritty's engine via `iced_term`) attached to a persistent per-worktree tmux session. See `README.md` for user-facing behavior.
+A macOS desktop app in Rust (iced 0.14) for working across Git worktrees. Bookmark repositories, browse their worktrees, and open an embedded terminal (Alacritty's engine via `iced_term`) attached to a persistent per-worktree tmux session, or a *managed* worktree: an agent pane that drives Claude, Codex or Pi. See `README.md` for user-facing behavior.
 
 The project is also a learning exercise: the owner is a React developer learning Rust. Prefer idiomatic, conventional Rust. Explain non-obvious Rust or iced patterns briefly in comments or replies, rather than writing clever code.
 
@@ -23,6 +23,7 @@ ruby .agents/skills/new-release/test/version_bump_test.rb  # tests for how a rel
 ruby scripts/latency.rb                              # keystroke latency, HEAD vs origin/main (builds both; ~5 min)
 ruby scripts/test/latency_test.rb                    # tests for the latency comparison rules
 cargo test --locked --features perf perf::           # tests for the latency harness
+(cd agent-bridge && node --test)                     # the agent bridge's normalizers (no `npm ci` needed)
 ```
 
 `vendor/iced_term` is a workspace member and a default member, so `cargo test`, `cargo clippy` and `cargo llvm-cov` run its tests and lints too; `cargo fmt` needs `--all` to include it. Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
@@ -67,6 +68,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, switching the running client to another worktree (`switch-client`, with a full-connect fallback), and the header status and pane. |
 | `app/unavailable.rs` | The modal listing a project's unavailable worktrees (hidden from the sidebar), opened from the project's ⋮ menu. |
 | `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
+| `app/managed.rs` | Managed worktrees: the bridge install state, per-harness model lists, one `Session` per worktree (composer, transcript, follow-up queue, `Run` state), and the agent pane. |
 | `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |
 | `app/tests.rs` | State-machine tests driven through `App::update`. |
 | `git.rs` | `discover` (resolve the checkout and its common dir) and `inventory` (`git worktree list --porcelain -z` parser). |
@@ -78,24 +80,29 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
 | `pull_request.rs` | One `gh pr list` per project, matching PRs to worktrees by branch, validation of the HTTPS PR URL, and the per-project `Badges`. |
 | `runner.rs` | Every subprocess: tool lookup (`PATH` + Homebrew), removal of the `GIT_*` overrides, per-call timeouts. |
-| `actions.rs` | Open in Finder or VS Code, copy path. |
+| `actions.rs` | Open in Finder or VS Code, copy path, open an HTTPS link. |
+| `agent.rs` | The harnesses, the bridge's wire format (`Event`, `Command`), the `Transcript`, and the one-line tool and thinking summaries. |
+| `agent_bridge.rs` | Runs the Node.js sidecar: copies the bundled bridge to Application Support, installs its SDKs with `npm ci`, lists models, and streams a session's events. |
 | `create.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`. |
 | `confirmation.rs`, `quit.rs` | Native confirmation sheets and the macOS quit shortcut. |
 | `backdrop.rs` | The macOS behind-window blur: an `NSVisualEffectView` under the content, so it ends on the window's rounded corners (winit's `blur` doesn't). |
 | `perf/` | Keystroke-latency harness (`--features perf` only): headless event loop around `App`, scenarios, and the line editor the terminal runs. `app/perf.rs` holds its `App` hooks. |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
 
+`agent-bridge/` is the sidecar for managed worktrees. Claude, Codex and Pi have no Rust SDK, so `bridge.mjs` drives their official TypeScript SDKs and speaks JSON lines to `agent_bridge.rs`. `normalize.mjs` turns each SDK's events into the app's `agent::Event`s and imports no SDK, so `node --test` runs without `npm ci`. Both files and the lockfile are compiled into the app (`include_str!`), so a change there needs a rebuild; a changed lockfile makes installed copies ask to install again. For development, `WORKTREE_BROWSER_AGENT_BRIDGE=$PWD/agent-bridge` (after `npm ci --ignore-scripts` there) runs the checkout's copy instead of the installed one. The app decides policy (queueing follow-ups, what a row says); the bridge only translates.
+
 `vendor/iced_term` is a patched copy of `iced_term` 0.8.0 (via `[patch.crates-io]`). It adds things such as an explicit `cell_size` so the grid matches Alacritty's metrics. Keep patches minimal, and note why in the code you touch there.
 
 ## Rules
 
 - **Never commit code review documents.** Review findings, audits and refactor wish lists (for example a `CODE_REVIEW.md`) must not be checked into source control. Keep them out of the repository (in the PR, an issue, or an untracked local file) and record the outcome as FRD rows and tests instead.
-- **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names and the theme palette are the only persisted state.
+- **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names, which worktrees are managed, and the theme palette are the only persisted state. Agent conversations are not saved.
 - **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Removing a project removes only the bookmark.
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; paths may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.
 - **No blocking work on the UI thread.** Run git, tmux, `gh` and `open` through `background(...)` or `Task::perform`, and return typed results as a `Message`. Guard async results with a request or epoch id so stale answers are ignored. Follow the existing patterns: `pr_request_id`, `refresh_id`, the `Connecting(id)` console state.
 - **tmux sessions** live on the `-L worktree-browser` socket and are named `wt-` plus 10 hex digits of SHA-256(common dir, canonical worktree path). Changing the naming scheme orphans users' running sessions, so it needs a migration (see `SessionNames::migrate`).
-- **Only open HTTPS URLs** with the OS opener.
+- **Only open HTTPS URLs** with the OS opener (`actions::open_https` for links in agent replies).
+- **Agents go through the bridge.** Talk to a harness only through its SDK in `agent-bridge/`, never by scraping a terminal. Keep the worktree path out of JSON (it is the bridge's working directory), guard bridge events with the session id, and never install the SDKs without the user asking.
 - **UI:** dark Dracula theme by default, 3px rounded corners, compact. Don't add padding to the terminal pane, and don't let sidebar labels wrap. Check visual changes with a macOS screenshot (`screencapture`) at the default (1120×720) and minimum (820×440) window sizes. Colors come from the `Palette` passed into each view and style (`style::panel(p, Panel::Glass)`, `p.muted()`); never hard-code a color in a view.
 - Errors are user-facing `String`s shown in the notice bar. Never `unwrap` or `panic` on I/O or subprocess results outside tests.
 - Keep `pub` minimal. This is a single binary crate.
@@ -108,6 +115,7 @@ Read `SECURITY.md` before changing `.github/dependabot.yml`, `deny.toml` or a wo
 - Pin GitHub Actions to a full commit SHA with a `# vX.Y.Z` comment, and pin tools that CI installs to a version. Give each workflow `permissions: {}` and grant per job. Use `persist-credentials: false` on checkout.
 - Add a crate only when it's needed. Prefer widely used crates with recent releases, and check that `cargo deny check` still passes. A new `[advisories] ignore` entry in `deny.toml` needs a `reason`.
 - Helper scripts are Ruby using only the standard library (`scripts/`), so CI needs no extra installs.
+- `agent-bridge/package.json` pins the three harness SDKs to exact versions, and `package-lock.json` is what users install (`npm ci --ignore-scripts`). Add an npm dependency there only for a harness SDK; keep everything else to Node's standard library.
 
 ## Tests
 
@@ -115,7 +123,7 @@ Read `SECURITY.md` before changing `.github/dependabot.yml`, `deny.toml` or a wo
 - Unit tests live next to the code in `#[cfg(test)] mod tests`. Use `tests/git_fixtures.rs` (`fixture()`, `run_git()`) to build real temporary repositories. The fixture paths deliberately contain spaces and newlines.
 - Drive the app state machine through `App::from_bookmarks(Store::open_path(tmp))` and `app.update(Message::…)`. Use `Task::units()` to assert which background work was started.
 - Tests that need tmux must use their own `-S <tmpdir>/sock -f /dev/null` server and skip if tmux is missing. Never touch the real `worktree-browser` socket or the user's home config from a test.
-- Fake external CLIs (`gh`) with small shell scripts in a tempdir, as in `pull_request.rs`.
+- Fake external CLIs (`gh`) with small shell scripts in a tempdir, as in `pull_request.rs`. The agent bridge is faked the same way (a shell script standing in for `node`, in `agent_bridge.rs`); tests never run a real harness or install an SDK. For app tests, `Session::attach` gives a session a fake bridge and returns the commands sent to it.
 
 ## Collaboration
 
