@@ -74,6 +74,8 @@ Tests: `ruby .agents/skills/new-release/test/version_bump_test.rb`.
    annotated tag, and pushes both with `git push --atomic origin
    HEAD:refs/heads/main refs/tags/vX.Y.Z`. If the push fails (main moved), it
    deletes the local tag and resets to where it started, so a rerun is clean.
+   Then it rebuilds, so `build.rs` sees the new tag and the window title
+   shows just `vX.Y.Z` rather than a branch and commit.
 4. Assembles `target/release/bundle/Worktree Browser.app`: the binary is
    renamed `worktree-browser`, `Info.plist` is generated (bundle id
    `local.worktree-browser`, version `X.Y.Z (<sha>)`), and `AppIcon.icns` is
