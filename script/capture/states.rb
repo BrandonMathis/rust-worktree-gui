@@ -100,6 +100,25 @@ module CaptureStates
       size: "1120x720",
       covers: %w[src/settings.rs src/color_wheel.rs],
       open: "settings"
+    },
+    {
+      name: "05-long-list",
+      title: "Long worktree list — the first 10, the selected one, and Show N more",
+      size: "1120x720",
+      covers: %w[src/app/sidebar.rs],
+      # The twelfth worktree: past the limit, so it is listed after the first ten.
+      project: 2, worktree: "docs-site-12-faq",
+      layout: lambda do |tmux, pane|
+        tmux.type(pane, GIT_LOG)
+        tmux.wait_for_text(pane, "Start the docs site")
+      end
+    },
+    {
+      name: "06-unavailable",
+      title: "Unavailable worktrees — the list from the project menu",
+      size: "1120x720",
+      covers: %w[src/app/unavailable.rs],
+      open: "unavailable"
     }
   ].freeze
 

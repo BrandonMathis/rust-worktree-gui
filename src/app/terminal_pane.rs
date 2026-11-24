@@ -249,7 +249,8 @@ impl App {
             ConsoleState::Attached(console)
                 if console.is_open()
                     && self.worktree_name_draft.is_none()
-                    && self.creation.is_none() =>
+                    && self.creation.is_none()
+                    && self.unavailable_list.is_none() =>
             {
                 console.focus().map(Message::Terminal)
             }

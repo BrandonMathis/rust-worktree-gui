@@ -10,7 +10,8 @@
 //!   exactly as a click on its sidebar row would.
 //! - `WORKTREE_BROWSER_CAPTURE_SIZE`: the initial window size, as `WIDTHxHEIGHT`.
 //! - `WORKTREE_BROWSER_CAPTURE_OPEN`: a view to show at startup. Only
-//!   `settings` (the Settings window) exists so far; add a variant here when a
+//!   `settings` (the Settings window) and `unavailable` (the first project's
+//!   unavailable worktrees) exist so far; add a variant here when a
 //!   screenshot state needs another view.
 
 use std::env;
@@ -41,11 +42,14 @@ pub fn window_size() -> Option<iced::Size> {
 /// A view to show at startup instead of the plain workspace.
 pub enum Open {
     Settings,
+    /// The first project's unavailable worktrees modal.
+    Unavailable,
 }
 
 pub fn open() -> Option<Open> {
     match env::var("WORKTREE_BROWSER_CAPTURE_OPEN").ok()?.as_str() {
         "settings" => Some(Open::Settings),
+        "unavailable" => Some(Open::Unavailable),
         // The capture script saves stderr next to each PNG, so a typo in a
         // state shows up there instead of as a silently wrong screenshot.
         other => {
