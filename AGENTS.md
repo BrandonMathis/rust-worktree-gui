@@ -20,9 +20,18 @@ ruby scripts/dependency_health.rb                    # out-of-date / out-of-supp
 ruby scripts/test/dependency_health_test.rb          # tests for that report
 ruby script/capture/test/states_test.rb              # tests for which screenshot states a PR gets
 ruby .agents/skills/new-release/test/version_bump_test.rb  # tests for how a release picks its version bump (local; not in CI)
+ruby scripts/latency.rb                              # keystroke latency, HEAD vs origin/main (builds both; ~5 min)
+ruby scripts/test/latency_test.rb                    # tests for the latency comparison rules
+cargo test --locked --features perf perf::           # tests for the latency harness
 ```
 
 `vendor/iced_term` is a workspace member and a default member, so `cargo test`, `cargo clippy` and `cargo llvm-cov` run its tests and lints too; `cargo fmt` needs `--all` to include it. Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
+
+## Keystroke latency
+
+`.github/workflows/latency.yml` measures how long a key press takes to change the pixels on screen, on every PR, and fails the check when the PR is significantly slower than its base (NFR-11). The harness is built into the app behind `--features perf` (`src/perf/`, off in normal builds): it runs the real `App` headlessly, presses keys through iced's widget tree, and renders every frame offscreen until its pixels change. The terminal runs a tiny line editor (`src/perf/echo.rs`) instead of tmux, so the number is the app's own pipeline. `scripts/latency.rb` builds base and head and runs them in turns on one machine, which is the only fair comparison. The rules (15% or 3σ, only when significant and seen in every round) are in that script.
+
+Run it before and after a change that touches input handling, `App::view`/`update`, the terminal widget or drawing: `ruby scripts/latency.rb` (or `--base-ref <rev>`; `--from target/latency` re-reads a run). Absolute numbers depend on the machine and its load; only the comparison means anything. When you add a keyboard-driven feature, add a scenario in `src/perf/scenarios.rs`. Results land in `target/latency/`; never commit them.
 
 ## Requirements are the spec
 
@@ -72,6 +81,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `create.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`. |
 | `confirmation.rs`, `quit.rs` | Native confirmation sheets and the macOS quit shortcut. |
 | `backdrop.rs` | The macOS behind-window blur: an `NSVisualEffectView` under the content, so it ends on the window's rounded corners (winit's `blur` doesn't). |
+| `perf/` | Keystroke-latency harness (`--features perf` only): headless event loop around `App`, scenarios, and the line editor the terminal runs. `app/perf.rs` holds its `App` hooks. |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
 
 `vendor/iced_term` is a patched copy of `iced_term` 0.8.0 (via `[patch.crates-io]`). It adds things such as an explicit `cell_size` so the grid matches Alacritty's metrics. Keep patches minimal, and note why in the code you touch there.
