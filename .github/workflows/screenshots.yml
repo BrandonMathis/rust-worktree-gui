@@ -5,11 +5,13 @@
 # dependency update) starts no macOS runner at all. The macOS job builds the app
 # with `--features capture` and runs script/capture/capture.rb for those states
 # (fixture repos plus a private tmux server with vim and shell splits); the PNGs
-# are posted in one PR comment that is updated on each push.
+# are linked from one PR comment that is updated on each push.
 #
-# The PNGs are committed to the `pr-screenshots` branch so the comment can show
-# them inline (GitHub has no API for uploading comment images). They are also
-# uploaded as a workflow artifact.
+# Nothing is committed to the repository. The PNGs are workflow artifacts, which
+# expire on their own: one zip of everything from the macOS job, then each PNG
+# again as its own unzipped artifact so the comment can link straight to an
+# image. GitHub has no API for uploading comment images, so the comment links
+# to the screenshots rather than showing them inline.
 name: Screenshots
 
 on:
@@ -36,7 +38,6 @@ env:
   CARGO_TERM_COLOR: always
   # Keep in step with `.tool-versions`.
   RUST_VERSION: 1.90.0
-  SCREENSHOT_BRANCH: pr-screenshots
 
 jobs:
   plan:
@@ -47,6 +48,7 @@ jobs:
       contents: read
     outputs:
       states: ${{ steps.select.outputs.states }}
+      matrix: ${{ steps.select.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,6 +69,8 @@ jobs:
             states=$(ruby script/capture/select.rb --all --summary "$GITHUB_STEP_SUMMARY")
           fi
           echo "states=$states" >> "$GITHUB_OUTPUT"
+          # The same names as a JSON array, for the `images` job's matrix.
+          echo "matrix=$(ruby -rjson -e 'puts ARGV[0].split(",").to_json' "$states")" >> "$GITHUB_OUTPUT"
 
   capture:
     name: Capture
@@ -100,16 +104,43 @@ jobs:
           path: screenshots/
           if-no-files-found: ignore
 
+  images:
+    name: Image (${{ matrix.state }})
+    needs: [plan, capture]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Artifacts of the same run are read and written with the runner's own
+    # token, so this job needs no permissions.
+    permissions: {}
+    strategy:
+      # `archive: false` uploads one file per step, so each state gets a job.
+      matrix:
+        state: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: screenshots
+          path: screenshots
+      # Unzipped, so the link in the comment leads to the PNG itself. The
+      # artifact is named after the file (`01-workspace.png`).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: screenshots/${{ matrix.state }}.png
+          archive: false
+          if-no-files-found: error
+
   publish:
     name: Comment
-    needs: capture
-    # Fork PRs get a read-only token, so they only get the artifact.
+    needs: images
+    # Fork PRs get a read-only token, so they only get the artifacts.
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
-      contents: write # push PNGs to the screenshot branch
+      contents: read
+      actions: read # list this run's artifacts
       pull-requests: write # create or update the comment
     env:
       GH_TOKEN: ${{ github.token }}
@@ -124,44 +155,13 @@ jobs:
         with:
           name: screenshots
           path: screenshots
-      - name: Push PNGs to the screenshot branch
-        id: push
-        run: |
-          set -euo pipefail
-          dir="pr-$PR/${HEAD_SHA::7}"
-          # Checkout does not persist credentials, so authenticate this remote only.
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git fetch --depth=1 origin "$SCREENSHOT_BRANCH"; then
-            git worktree add --detach publish FETCH_HEAD
-          else
-            # First run: start the branch with no history from main.
-            git worktree add --detach publish
-            git -C publish checkout --orphan "$SCREENSHOT_BRANCH"
-            git -C publish rm -rfq .
-          fi
-          mkdir -p "publish/$dir"
-          cp screenshots/*.png "publish/$dir/"
-          git -C publish add -A
-          git -C publish commit -qm "Screenshots for #$PR at ${HEAD_SHA::7}"
-          # Another PR may push at the same time; rebase and retry.
-          for attempt in 1 2 3 4; do
-            git -C publish push origin "HEAD:$SCREENSHOT_BRANCH" && break
-            [ "$attempt" = 4 ] && exit 1
-            sleep $((attempt * 2))
-            git -C publish fetch --depth=1 origin "$SCREENSHOT_BRANCH"
-            git -C publish rebase FETCH_HEAD
-          done
-          # Pin the image URLs to this commit so later pushes can't change them.
-          commit=$(git -C publish rev-parse HEAD)
-          echo "base=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/$commit/$dir" >> "$GITHUB_OUTPUT"
       - name: Create or update the PR comment
-        env:
-          BASE_URL: ${{ steps.push.outputs.base }}
         run: |
           set -euo pipefail
-          ruby script/capture/comment.rb screenshots "$BASE_URL" "$HEAD_SHA" "$RUN_URL" > comment.md
+          # One "name<TAB>id" line per artifact of this run.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+            --jq '.artifacts[] | [.name, .id] | @tsv' > artifacts.tsv
+          ruby script/capture/comment.rb screenshots artifacts.tsv "$HEAD_SHA" "$RUN_URL" > comment.md
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
           marker='<!-- worktree-browser-screenshots -->'
           ids=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/$PR/comments" \
