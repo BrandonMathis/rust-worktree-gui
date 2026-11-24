@@ -56,6 +56,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `app/sessions.rs` | tmux session badges (live, new output, bell) from a background `list-windows -a` poll. |
 | `app/auto_refresh.rs`, `watch.rs` | Automatic refresh on window focus and when a repository's Git metadata fingerprint changes (polled with `stat`). |
 | `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, switching the running client to another worktree (`switch-client`, with a full-connect fallback), and the header status and pane. |
+| `app/unavailable.rs` | The modal listing a project's unavailable worktrees (hidden from the sidebar), opened from the project's ⋮ menu. |
 | `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
 | `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |
 | `app/tests.rs` | State-machine tests driven through `App::update`. |

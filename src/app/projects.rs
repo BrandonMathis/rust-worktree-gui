@@ -19,6 +19,19 @@ pub(super) enum RefreshKind {
     Automatic,
 }
 
+/// How many worktrees an expanded project lists before "Show N more".
+pub(super) const WORKTREE_LIMIT: usize = 10;
+
+/// What the sidebar lists under an expanded project.
+pub(super) struct SidebarRows<'a> {
+    /// The worktree rows, in Git's order.
+    pub(super) rows: Vec<&'a Worktree>,
+    /// How many more "Show N more" would list.
+    pub(super) hidden: usize,
+    /// Whether the list is long enough to offer "Show more" / "Show fewer".
+    pub(super) collapsible: bool,
+}
+
 impl Project {
     pub(super) fn bookmark(&self) -> ProjectBookmark {
         ProjectBookmark {
@@ -41,6 +54,51 @@ impl Project {
         self.inventory.as_deref().unwrap_or_default()
     }
 
+    /// The worktrees the sidebar lists under this project. Unavailable ones
+    /// (see [`Worktree::unavailable_reason`]) are left out; the project menu
+    /// counts them and opens a list of them instead. Until the user shows them
+    /// all, only the first [`WORKTREE_LIMIT`] of the rest are listed. The
+    /// selected worktree is always listed, even when it is unavailable or past
+    /// the limit, so the worktree the workspace shows never vanishes from the
+    /// sidebar.
+    pub(super) fn sidebar_rows(&self, selected: Option<&Path>) -> SidebarRows<'_> {
+        let is_selected = |tree: &Worktree| Some(tree.path.as_path()) == selected;
+        let listed: Vec<&Worktree> = self
+            .worktrees()
+            .iter()
+            .filter(|tree| tree.unavailable_reason().is_none() || is_selected(tree))
+            .collect();
+        let collapsible = listed.len() > WORKTREE_LIMIT;
+        if self.show_all_worktrees || !collapsible {
+            return SidebarRows {
+                rows: listed,
+                hidden: 0,
+                collapsible,
+            };
+        }
+        let total = listed.len();
+        // `enumerate` pairs each item with its index, like `.map((t, i) => …)`.
+        let rows: Vec<&Worktree> = listed
+            .into_iter()
+            .enumerate()
+            .filter(|(index, tree)| *index < WORKTREE_LIMIT || is_selected(tree))
+            .map(|(_, tree)| tree)
+            .collect();
+        SidebarRows {
+            hidden: total - rows.len(),
+            rows,
+            collapsible,
+        }
+    }
+
+    /// The worktrees that can't open a terminal, which the sidebar leaves out.
+    pub(super) fn unavailable_worktrees(&self) -> Vec<&Worktree> {
+        self.worktrees()
+            .iter()
+            .filter(|tree| tree.unavailable_reason().is_some())
+            .collect()
+    }
+
     pub(super) fn worktree(&self, path: &Path) -> Option<&Worktree> {
         self.worktrees().iter().find(|tree| tree.path == path)
     }
@@ -59,6 +117,7 @@ impl App {
             checkout: bookmark.checkout,
             worktree_names: bookmark.worktree_names,
             expanded: false,
+            show_all_worktrees: false,
             refresh_id: None,
             refresh_kind: RefreshKind::default(),
             fingerprint: None,
@@ -259,6 +318,9 @@ impl App {
                 .map(Project::bookmark),
         )?;
         self.projects.retain(|p| p.id != id);
+        if self.unavailable_list == Some(id) {
+            self.unavailable_list = None;
+        }
         if self
             .worktree_name_draft
             .as_ref()
