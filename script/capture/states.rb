@@ -15,6 +15,7 @@ module CaptureStates
   # Files that change how every state looks.
   SHARED = %w[
     src/main.rs
+    src/backdrop.rs
     src/style.rs
     src/theme.rs
     src/icons.rs

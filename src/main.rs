@@ -1,5 +1,6 @@
 mod actions;
 mod app;
+mod backdrop;
 #[cfg(feature = "capture")]
 mod capture;
 mod color_wheel;
@@ -51,7 +52,9 @@ fn main() -> iced::Result {
     .window(iced::window::Settings {
         size,
         transparent: true,
-        blur: cfg!(target_os = "macos"),
+        // On macOS the blur is an AppKit view (`backdrop`), which follows the
+        // window's rounded corners; winit's blur doesn't.
+        blur: false,
         exit_on_close_request: false,
         min_size: Some(iced::Size::new(820.0, 440.0)),
         ..iced::window::Settings::default()

@@ -331,6 +331,7 @@ fn window_opened(id: iced::window::Id) -> Task<Message> {
     return Task::batch([
         scale,
         iced::window::run(id, crate::quit::install_shortcut).discard(),
+        iced::window::run(id, crate::backdrop::install).discard(),
     ]);
     #[cfg(not(target_os = "macos"))]
     return scale;
