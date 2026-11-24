@@ -12,7 +12,6 @@ use iced::Subscription;
 use std::hash::{Hash, Hasher};
 use std::io::Result;
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, Receiver};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
@@ -36,12 +35,12 @@ pub struct Terminal {
     pub(crate) cache: Cache,
     pub(crate) bindings: BindingsLayout,
     pub(crate) backend: backend::Backend,
-    backend_event_rx: Arc<Mutex<Receiver<AlacrittyEvent>>>,
+    backend_event_rx: Arc<Mutex<backend::EventReceiver>>,
 }
 
 impl Terminal {
     pub fn new(id: u64, settings: Settings) -> Result<Self> {
-        let (backend_event_tx, backend_event_rx) = mpsc::channel(100);
+        let (event_proxy, backend_event_rx) = backend::event_channel();
         let theme = Theme::new(settings.theme);
         let font = TermFont::new(settings.font);
 
@@ -52,11 +51,7 @@ impl Terminal {
             theme,
             bindings: BindingsLayout::default(),
             cache: Cache::default(),
-            backend: backend::Backend::new(
-                id,
-                backend_event_tx,
-                settings.backend,
-            )?,
+            backend: backend::Backend::new(id, event_proxy, settings.backend)?,
             backend_event_rx: Arc::new(Mutex::new(backend_event_rx)),
         };
         // Give the backend real cell metrics before the first event, as the
@@ -126,7 +121,7 @@ impl Terminal {
 #[derive(Clone)]
 struct TerminalSubscriptionData {
     id: u64,
-    event_receiver: Arc<Mutex<Receiver<AlacrittyEvent>>>,
+    event_receiver: Arc<Mutex<backend::EventReceiver>>,
 }
 
 impl Hash for TerminalSubscriptionData {
@@ -149,7 +144,7 @@ fn terminal_subscription_stream(
                     // Patch: drain whatever else is already queued so a burst of
                     // output costs one grid sync and redraw, not one per wakeup.
                     let mut batch = vec![event];
-                    while let Ok(next) = event_receiver.try_recv() {
+                    while let Some(next) = event_receiver.try_recv() {
                         batch.push(next);
                     }
                     for event in coalesce_wakeups(batch) {
