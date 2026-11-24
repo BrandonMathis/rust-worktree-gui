@@ -268,7 +268,7 @@ impl App {
             worktree: Some(tree.path.clone()),
         };
         let editor = self.rename_editor(&target, tree.label(), false);
-        let (terminal_status, body) = self.terminal_pane(tree);
+        let (terminal_status, body) = self.terminal_pane(tree, corners);
         let heading = row![
             self.show_sidebar_button(),
             title,

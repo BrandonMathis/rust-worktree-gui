@@ -70,6 +70,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `actions.rs` | Open in Finder or VS Code, copy path. |
 | `create.rs` | Creation form state, a nested component (`Message`, `update`, `Outcome`) like `settings.rs`. |
 | `confirmation.rs`, `quit.rs` | Native confirmation sheets and the macOS quit shortcut. |
+| `backdrop.rs` | The macOS behind-window blur: an `NSVisualEffectView` under the content, so it ends on the window's rounded corners (winit's `blur` doesn't). |
 | `row_menu.rs`, `style.rs`, `icons.rs` | Custom ⋮ menu widget, glass styles drawn from the active `Palette` (3px radius), inline SVG icons. |
 
 `vendor/iced_term` is a patched copy of `iced_term` 0.8.0 (via `[patch.crates-io]`). It adds things such as an explicit `cell_size` so the grid matches Alacritty's metrics. Keep patches minimal, and note why in the code you touch there.

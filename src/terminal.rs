@@ -82,9 +82,11 @@ impl Console {
         }
     }
 
-    pub fn view(&self) -> Element<'_, Event> {
+    /// The terminal, rounded to the `radius` of the pane it fills, so its
+    /// background doesn't square off a rounded window corner (UI-13).
+    pub fn view(&self, radius: iced::border::Radius) -> Element<'_, Event> {
         // Embed edge-to-edge: standalone Alacritty window padding does not apply.
-        TerminalView::show_at_scale(&self.widget, self.scale)
+        TerminalView::show_rounded(&self.widget, self.scale, radius)
     }
 
     pub fn is_open(&self) -> bool {

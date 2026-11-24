@@ -87,7 +87,8 @@ impl Corners {
         }
     }
 
-    fn radius(self) -> iced::border::Radius {
+    /// These corners as an iced border radius, with 3px top corners.
+    pub fn radius(self) -> iced::border::Radius {
         iced::border::Radius::new(RADIUS)
             .bottom_left(self.bottom_left)
             .bottom_right(self.bottom_right)
