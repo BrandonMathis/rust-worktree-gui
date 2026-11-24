@@ -19,6 +19,7 @@ mod terminal;
 mod terminal_config;
 mod theme;
 mod tmux;
+mod version;
 mod watch;
 
 #[cfg(test)]
@@ -38,13 +39,16 @@ fn main() -> iced::Result {
         .as_ref()
         .map_or(iced::Font::DEFAULT, |p| p.font.font_type);
     let window_radius = style::window_radius();
+    let title = version::window_title();
     iced::application(
         move || app::App::new(preferences.clone(), window_radius),
         app::App::update,
         app::App::view,
     )
     .default_font(font)
-    .title("Worktree Browser")
+    // The version, plus the branch and commit for a non-release build. Iced asks
+    // for the title on every update, so the closure hands out a copy.
+    .title(move |_: &app::App| title.clone())
     .subscription(app::App::subscription)
     // Both read the app's palette, so theme edits apply to the whole window live.
     .theme(app::App::theme)

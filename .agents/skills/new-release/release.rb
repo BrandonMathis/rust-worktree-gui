@@ -341,6 +341,12 @@ if release
     run!("git", "reset", "--keep", original, chdir: root)
     fail!("git push failed, so nothing was released (#{remote_branch} may have moved; rerun):\n#{err}")
   end
+
+  # The window title comes from the commit and tags `build.rs` saw. The build
+  # above ran before the release commit and tag existed, so rebuild: only this
+  # crate recompiles, and the title then shows just the new version.
+  step "Rebuilding #{tag} so the window title shows the release"
+  run!("cargo", "build", "--release", "--locked", chdir: root)
 end
 
 sha = run!("git", "rev-parse", "--short", "HEAD", chdir: root).strip
