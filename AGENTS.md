@@ -19,6 +19,7 @@ cargo llvm-cov --locked --ignore-filename-regex vendor/  # app coverage; CI enfo
 ruby scripts/dependency_health.rb                    # out-of-date / out-of-support report (network)
 ruby scripts/test/dependency_health_test.rb          # tests for that report
 ruby script/capture/test/states_test.rb              # tests for which screenshot states a PR gets
+ruby .agents/skills/new-release/test/version_bump_test.rb  # tests for how a release picks its version bump (local; not in CI)
 ```
 
 `vendor/iced_term` is a workspace member and a default member, so `cargo test`, `cargo clippy` and `cargo llvm-cov` run its tests and lints too; `cargo fmt` needs `--all` to include it. Format, clippy and test must pass before you call work done. CI (`.github/workflows/ci.yml`) runs every command above on each pull request. Lint levels live in `Cargo.toml` `[lints]`: `unwrap`, `expect`, `panic`, `todo` and `dbg!` are denied in app code and allowed in tests (`clippy.toml`). Fix the code rather than adding `#[allow]`; if an allow is truly needed, scope it narrowly and say why. `cargo-deny` 0.22+ needs a newer Rust than the pin, so install `cargo-deny@0.21.0` locally. To test a missing tmux, run with `WORKTREE_BROWSER_TMUX=/nonexistent/tmux`.
@@ -111,4 +112,4 @@ Another agent (Pi) may be editing this repository at the same time. Before broad
 
 Write pull request descriptions as `.agents/skills/pr-description/SKILL.md` describes: a "What changed" section and a "Why" section, with no test plans or lists of tests added.
 
-A "release" means a local install, not a version bump or GitHub release: `.agents/skills/new-release/SKILL.md` builds the checkout and installs it as `~/Desktop/Worktree Browser.app`. Project skills live in `.agents/skills/` and are committed, so every worktree has them. `.claude/skills` is a symlink to that folder, because Claude Code reads skills from there.
+A "release" means `.agents/skills/new-release/SKILL.md`: it picks the next major/minor/patch version from the changes since the last release, commits the bump to main, tags it `vX.Y.Z`, pushes both, and installs the build as `/Applications/Worktree Browser.app`. There is no GitHub Release. Project skills live in `.agents/skills/` and are committed, so every worktree has them. `.claude/skills` is a symlink to that folder, because Claude Code reads skills from there.
