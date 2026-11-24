@@ -109,3 +109,5 @@ Read `SECURITY.md` before changing `.github/dependabot.yml`, `deny.toml` or a wo
 Another agent (Pi) may be editing this repository at the same time. Before broad edits, check `git status` and file modification times. Don't revert changes you didn't make, and avoid large refactors of a file someone else is actively changing.
 
 Write pull request descriptions as `.claude/skills/pr-description/SKILL.md` describes: a "What changed" section and a "Why" section, with no test plans or lists of tests added.
+
+A "release" means a local install, not a version bump or GitHub release: `.claude/skills/new-release/SKILL.md` builds the checkout and installs it as `~/Desktop/Worktree Browser.app`. Project skills live in `.claude/skills/` and are committed, so every worktree has them. `.gitignore` tracks that folder and keeps the rest of `.claude/` ignored.

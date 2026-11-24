@@ -1,2 +1,7 @@
 /target/
 .DS_Store
+# Track project skills so every checkout and worktree has them; keep the rest
+# of .claude (local settings, worktrees) ignored, overriding global ignores.
+!/.claude/
+/.claude/*
+!/.claude/skills/
