@@ -1,6 +1,6 @@
 # Rust worktree GUI — macOS prototype
 
-This is the original external-window prototype plan. The app now uses an embedded Alacritty engine and persistent tmux sessions; see [README.md](README.md) for an overview and [docs/frd/](docs/frd/README.md) for current behavior.
+This is the original external-window prototype plan. The app now uses an embedded Alacritty engine and persistent tmux sessions; see [README.md](README.md) for the current workflow.
 
 Build a standalone project browser in Rust. Git tells us which worktrees exist and where they live. The app remembers only the projects you choose and opens coding sessions in the installed Alacritty. No Pi extension, repository scanning, or terminal fork.
 
