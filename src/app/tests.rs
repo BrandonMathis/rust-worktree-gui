@@ -769,7 +769,7 @@ fn rename_validates_input_and_cancel_discards_the_draft() {
 }
 
 #[test]
-fn row_menu_mirrors_the_header_actions() {
+fn row_menu_offers_the_worktree_and_project_actions() {
     use DirectoryAction::*;
     assert_eq!(
         menu_actions(true, 0),
