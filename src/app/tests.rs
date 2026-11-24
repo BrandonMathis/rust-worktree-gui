@@ -770,10 +770,10 @@ fn rename_validates_input_and_cancel_discards_the_draft() {
 }
 
 #[test]
-fn row_menu_mirrors_the_header_actions() {
+fn row_menu_offers_the_worktree_and_project_actions() {
     use DirectoryAction::*;
     assert_eq!(
-        menu_actions(true),
+        menu_actions(true, 0),
         [
             MenuAction::Directory(Finder),
             MenuAction::Directory(VsCode),
@@ -782,7 +782,7 @@ fn row_menu_mirrors_the_header_actions() {
         ]
     );
     assert_eq!(
-        menu_actions(false),
+        menu_actions(false, 0),
         [
             MenuAction::NewWorktree,
             MenuAction::Directory(Finder),
@@ -1373,4 +1373,129 @@ fn harness_is_chosen_before_the_first_prompt_and_model_and_thinking_any_time() {
     );
     let (_, saved) = Store::open_path(tmp.path().join("config/projects.json")).unwrap();
     assert_eq!(saved[0].managed[&linked], settings(&app));
+}
+
+/// Adds `count` linked worktrees (copies of `template` at new paths) to the
+/// first project's inventory and returns their paths.
+fn add_worktrees(app: &mut App, template: &Path, count: usize, available: bool) -> Vec<PathBuf> {
+    let project = &mut app.projects[0];
+    let template = project.worktree(template).unwrap().clone();
+    let start = project.worktrees().len();
+    let trees: Vec<Worktree> = (start..start + count)
+        .map(|n| Worktree {
+            path: template.path.with_file_name(format!("extra {n}")),
+            directory_exists: available,
+            ..template.clone()
+        })
+        .collect();
+    let paths = trees.iter().map(|tree| tree.path.clone()).collect();
+    project.inventory.as_mut().unwrap().extend(trees);
+    paths
+}
+
+/// The sidebar's rows for the first project, and how many "Show N more" hides.
+fn sidebar_listing(app: &App, selected: &Path) -> (Vec<PathBuf>, usize) {
+    let listing = app.projects[0].sidebar_rows(Some(selected));
+    let paths = listing.rows.iter().map(|tree| tree.path.clone()).collect();
+    (paths, listing.hidden)
+}
+
+#[test]
+fn long_worktree_lists_show_ten_until_the_user_shows_them_all() {
+    let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    // Thirteen worktrees: the main checkout plus twelve linked ones.
+    let extra = add_worktrees(&mut app, &linked, 11, true);
+    let last = extra[10].clone();
+
+    let (paths, hidden) = sidebar_listing(&app, &root);
+    assert_eq!((paths.len(), hidden), (10, 3));
+    assert_eq!(paths[0], root);
+    assert!(app.projects[0].sidebar_rows(Some(&root)).collapsible);
+
+    // The selected worktree stays listed even past the limit.
+    let (paths, hidden) = sidebar_listing(&app, &last);
+    assert_eq!((paths.len(), hidden), (11, 2));
+    assert_eq!(paths.last(), Some(&last));
+
+    let _ = app.update(Message::ShowAllWorktrees(id, true));
+    assert_eq!(
+        sidebar_listing(&app, &root),
+        (
+            app.projects[0]
+                .worktrees()
+                .iter()
+                .map(|t| t.path.clone())
+                .collect(),
+            0
+        )
+    );
+
+    let _ = app.update(Message::ShowAllWorktrees(id, false));
+    assert_eq!(sidebar_listing(&app, &root).1, 3);
+}
+
+#[test]
+fn unavailable_worktrees_leave_the_sidebar_for_a_list_in_the_project_menu() {
+    let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    let missing = add_worktrees(&mut app, &linked, 3, false);
+    let project = Selection {
+        project: id,
+        worktree: None,
+    };
+
+    // Only available worktrees are listed, and they don't count toward the limit.
+    assert_eq!(
+        sidebar_listing(&app, &root),
+        (vec![root.clone(), linked.clone()], 0)
+    );
+    assert!(!app.projects[0].sidebar_rows(Some(&root)).collapsible);
+    // A selected worktree stays listed even when it becomes unavailable (WT-06).
+    assert!(sidebar_listing(&app, &missing[1]).0.contains(&missing[1]));
+
+    // The project menu counts them; worktree menus don't offer the item.
+    assert!(menu_actions(false, 3).contains(&MenuAction::UnavailableWorktrees(3)));
+    assert!(
+        !menu_actions(false, 0)
+            .iter()
+            .any(|a| matches!(a, MenuAction::UnavailableWorktrees(_)))
+    );
+    assert_eq!(
+        MenuAction::UnavailableWorktrees(3).to_string(),
+        "3 Unavailable Worktrees…"
+    );
+    assert_eq!(
+        MenuAction::UnavailableWorktrees(1).to_string(),
+        "1 Unavailable Worktree…"
+    );
+
+    // Choosing it opens the modal with all of them, without touching the selection.
+    let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    let selection = app.selection.clone();
+    let _ = app.update(Message::MenuAction(
+        project.clone(),
+        MenuAction::UnavailableWorktrees(3),
+    ));
+    assert_eq!(app.unavailable_list, Some(id));
+    assert_eq!(app.selection, selection);
+    let listed: Vec<PathBuf> = app.projects[0]
+        .unavailable_worktrees()
+        .iter()
+        .map(|tree| tree.path.clone())
+        .collect();
+    assert_eq!(listed, missing);
+
+    let _ = app.update(Message::CloseUnavailableWorktrees);
+    assert_eq!(app.unavailable_list, None);
+
+    // Removing the project closes a modal left open for it.
+    let _ = app.update(Message::MenuAction(
+        project.clone(),
+        MenuAction::UnavailableWorktrees(3),
+    ));
+    let _ = app.update(Message::MenuAction(project, MenuAction::RemoveProject));
+    let _ = app.update(Message::ConfirmationAnswered(
+        Confirmation::RemoveProject(id),
+        true,
+    ));
+    assert_eq!(app.unavailable_list, None);
 }

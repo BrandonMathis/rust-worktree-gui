@@ -1,73 +1,114 @@
 ---
 name: new-release
-description: Build a release of Worktree Browser, package it as "Worktree Browser.app", stop the running copy, replace the bundle on the Desktop and relaunch it. Use when asked to rebuild/install/ship/refresh the release build, update the Desktop app, or "make/create a new release". This is the project's release process: not a version bump PR, tag or GitHub release.
+description: Cut a release of Worktree Browser — pick the next major/minor/patch version from the changes since the last release, commit the bump, tag it vX.Y.Z, push to main — then build "Worktree Browser.app", install it in /Applications, and relaunch it. Use when asked to rebuild/install/ship/refresh the release build, update the installed app, or "make/create a new release".
 ---
 
-# New release (local install)
+# New release
 
-Builds the current checkout in release mode and installs it as
-`~/Desktop/Worktree Browser.app`, replacing and relaunching any running copy.
-This is a local install for the owner, not a GitHub release or tag.
+Cuts a version and installs it on this Mac:
+
+1. works out the next version from the changes since the last release;
+2. commits the bump to `Cargo.toml` and `Cargo.lock` as `Release X.Y.Z`, tags
+   it `vX.Y.Z` and pushes the commit and the tag to `origin/main`;
+3. builds that commit and installs it as `/Applications/Worktree Browser.app`,
+   replacing and relaunching the running copy.
+
+There is no GitHub Release; the tag is the record.
 
 ## Run it
 
-From the root of the checkout to build (the main checkout or any worktree; it
-builds whatever is checked out there):
+From the root of the checkout (the main checkout or any worktree; it releases
+whatever is checked out there, which must be `origin/main`). Check the plan
+first, then cut the release:
 
 ```sh
-ruby .agents/skills/new-release/release.rb
+ruby .agents/skills/new-release/release.rb --plan
+ruby .agents/skills/new-release/release.rb --co-author "<your Co-Authored-By value>"
 ```
 
-The skill is committed with the project, so every checkout and worktree has
-its own copy. It builds the checkout it's run from.
-
-Options: `--dest DIR` installs somewhere other than `~/Desktop`; `--no-open`
-installs without relaunching; `--skip-fetch` skips the origin check (offline);
-`--allow-behind` builds even when the checkout is missing origin's commits.
+`--plan` fetches, prints each change since the last release with the bump it
+implies and the next version, and stops. Read the list before releasing: if
+the heuristic got a change wrong (say, a feature merged from a branch without
+a `feat/` prefix), rerun with `--bump major|minor|patch`. Pass your commit
+attribution with `--co-author` (it becomes the release commit's
+`Co-Authored-By:` trailer); a person running the script can leave it out.
 The build takes a few minutes the first time, so give the command a long
 timeout (10 minutes).
 
+Other options: `--dest DIR` installs somewhere other than `/Applications`;
+`--no-open` installs without relaunching. `--no-version` installs the checkout
+as it is, with no bump, tag or push: use it only when the user asks to
+install a branch that isn't on main, and with it `--skip-fetch` (offline) and
+`--allow-behind` (build without origin's newest commits) are allowed.
+
+## How the version is chosen
+
+`version_bump.rb` looks at the main-line commits since the last release: the
+`vX.Y.Z` tag of the current `Cargo.toml` version, or, for versions released
+before tagging began, the main-line commit that set it.
+
+- A merged PR's type is its branch prefix (`feat/…`, `fix/…`, `ci/…`,
+  `chore/…`, `dependabot/…`); a direct commit's is its Conventional Commits
+  prefix (`fix: …`).
+- `feat` is a **minor** bump; any other type, or none, is a **patch**.
+- `type!:` in a subject or PR title, a `feat!/…` branch, or a
+  `BREAKING CHANGE:` footer in any commit in the range is a **major** bump.
+- Release commits and `release/…` merges are ignored. With no changes since
+  the last release, the script reinstalls the current version without a tag.
+
+Plain semver is applied as is, so a breaking change takes 0.x to 1.0.0.
+Tests: `ruby .agents/skills/new-release/test/version_bump_test.rb`.
+
 ## What the script does
 
-1. Fetches origin's default branch (`origin/main`) and compares it with HEAD:
-   - up to date (HEAD contains it): continue;
-   - strictly behind, with no uncommitted changes to tracked files:
-     fast-forward (`git merge --ff-only`) and print the commits pulled in;
-   - diverged, or behind with uncommitted changes: **stop** and list the
-     missing commits. Ask the user whether to merge/rebase first or rebuild
-     with `--allow-behind`; don't decide for them.
-   It never touches the local `main` branch ref, which may be checked out
-   in another worktree.
-2. `cargo build --release --locked`.
-3. Assembles `target/release/bundle/Worktree Browser.app`: the binary is
+1. Fetches origin's default branch and fast-forwards the checkout if it's
+   strictly behind and clean. A versioned release then requires that HEAD
+   **is** `origin/main` with no uncommitted changes to tracked files; otherwise
+   it stops. Land the work on main first (or, if the user asks, use
+   `--no-version`). It never touches the local `main` branch ref, which may be
+   checked out in another worktree.
+2. Refuses if the tag already exists, writes the new version, and runs
+   `cargo build --release --locked` (the build fails, and the version edit is
+   reverted, if the lock file doesn't match).
+3. Commits `Release X.Y.Z` (the changes listed in the body), creates the
+   annotated tag, and pushes both with `git push --atomic origin
+   HEAD:refs/heads/main refs/tags/vX.Y.Z`. If the push fails (main moved), it
+   deletes the local tag and resets to where it started, so a rerun is clean.
+   Then it rebuilds, so `build.rs` sees the new tag and the window title
+   shows just `vX.Y.Z` rather than a branch and commit.
+4. Assembles `target/release/bundle/Worktree Browser.app`: the binary is
    renamed `worktree-browser`, `Info.plist` is generated (bundle id
-   `local.worktree-browser`, version `<Cargo version> (<branch> <sha>[-dirty])`),
-   and `AppIcon.icns` is rendered from `assets/icon.svg` with `rsvg-convert`
-   and `iconutil` (falls back to the old bundle's icon).
-4. Ad-hoc signs the bundle (`codesign --sign -`) and verifies it.
-5. Stops only the copy running from the destination path, with SIGTERM
-   (escalating to SIGKILL after 5s). This skips the quit confirmation dialog
-   and loses nothing: terminals live in tmux on the `-L worktree-browser`
-   socket and reattach on relaunch. A `cargo run` dev instance is untouched.
-6. Moves the old bundle to `target/release/previous/` (one rollback copy),
-   copies the new one into place with `ditto`, opens it and waits for the
-   process to appear.
+   `local.worktree-browser`, version `X.Y.Z (<sha>)`), and `AppIcon.icns` is
+   rendered from `assets/icon.svg` with `rsvg-convert` and `iconutil` (falls
+   back to the old bundle's icon). It's ad-hoc signed (`codesign --sign -`)
+   and verified.
+5. Stops only the copies running from the install path and from the old
+   `~/Desktop` location, with SIGTERM (escalating to SIGKILL after 5s). This
+   skips the quit confirmation dialog and loses nothing: terminals live in
+   tmux on the `-L worktree-browser` socket and reattach on relaunch. A
+   `cargo run` dev instance is untouched.
+6. Moves the old `/Applications` bundle to `target/release/previous/` (one
+   rollback copy), moves any bundle left on the Desktop by earlier releases to
+   the Trash, copies the new one into place with `ditto`, opens it and waits
+   for the process to appear.
 
 ## Before running
 
-- Mention it if `git status` shows uncommitted changes: the build includes
-  them and the version is marked `-dirty`. Go ahead unless the user objects.
-- Don't run the full check suite unless asked; the user wants the build. If
-  the build fails, report the compiler error rather than installing anything.
+- Don't run the full check suite unless asked; CI runs it on every PR before merge. If
+  the build fails, report the compiler error.
+- If the checkout isn't `origin/main` (a feature branch, local commits,
+  uncommitted changes), don't work around it: ask the user whether to land
+  the work first or install it unversioned with `--no-version`.
 
 ## After running
 
-Report the installed version line, the new pid, and whether the checkout was
-already up to date with `origin/main` or was fast-forwarded (say which commit
-was built; don't claim "latest main" without the script's confirmation). To roll back:
+Report the version change and bump level (with the reason), the tag and that
+it was pushed, the installed version line, and the new pid. If a Desktop copy
+was moved to the Trash, say so. To roll back the install (the tag and commit
+stay; they're history):
 
 ```sh
-rm -rf ~/Desktop/"Worktree Browser.app"
-mv target/release/previous/"Worktree Browser.app" ~/Desktop/
-open ~/Desktop/"Worktree Browser.app"
+rm -rf /Applications/"Worktree Browser.app"
+mv target/release/previous/"Worktree Browser.app" /Applications/
+open /Applications/"Worktree Browser.app"
 ```

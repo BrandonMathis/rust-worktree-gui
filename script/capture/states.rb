@@ -102,14 +102,33 @@ module CaptureStates
       open: "settings"
     },
     {
-      name: "05-agent-prompt",
+      name: "05-long-list",
+      title: "Long worktree list — the first 10, the selected one, and Show N more",
+      size: "1120x720",
+      covers: %w[src/app/sidebar.rs],
+      # The twelfth worktree: past the limit, so it is listed after the first ten.
+      project: 2, worktree: "docs-site-12-faq",
+      layout: lambda do |tmux, pane|
+        tmux.type(pane, GIT_LOG)
+        tmux.wait_for_text(pane, "Start the docs site")
+      end
+    },
+    {
+      name: "06-unavailable",
+      title: "Unavailable worktrees — the list from the project menu",
+      size: "1120x720",
+      covers: %w[src/app/unavailable.rs],
+      open: "unavailable"
+    },
+    {
+      name: "07-agent-prompt",
       title: "Managed worktree — a new conversation's prompt, harness, model and thinking",
       size: "1120x720",
       covers: %w[src/agent.rs src/app/agent_pane.rs src/app/creation.rs src/create.rs],
       project: 1, worktree: "design-system-storybook"
     },
     {
-      name: "06-agent-conversation",
+      name: "08-agent-conversation",
       title: "Managed worktree — collapsed tool calls and a queued follow-up",
       size: "1120x720",
       covers: %w[src/agent.rs src/app/agent_pane.rs],

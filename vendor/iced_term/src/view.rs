@@ -157,7 +157,8 @@ impl<'a> TerminalView<'a> {
         &self,
         state: &mut TerminalViewState,
         layout_position: Point,
-        cursor_position: Point,
+        // Only set while the pointer is over the grid.
+        cursor_position: Option<Point>,
         event: &iced::mouse::Event,
     ) -> Vec<Command> {
         let mut commands = Vec::new();
@@ -168,13 +169,16 @@ impl<'a> TerminalView<'a> {
             iced_core::mouse::Event::ButtonPressed(
                 iced_core::mouse::Button::Left,
             ) => {
+                let Some(cursor_position) = cursor_position else {
+                    return Vec::default();
+                };
                 if !state.is_focused() {
                     return Vec::default();
                 }
 
                 Self::handle_left_button_pressed(
                     state,
-                    &terminal_mode,
+                    terminal_content,
                     cursor_position,
                     layout_position,
                     &mut commands,
@@ -187,7 +191,7 @@ impl<'a> TerminalView<'a> {
 
                 Self::handle_cursor_moved(
                     state,
-                    self.term.backend.renderable_content(),
+                    terminal_content,
                     position,
                     layout_position,
                     &mut commands,
@@ -197,6 +201,7 @@ impl<'a> TerminalView<'a> {
                 iced_core::mouse::Button::Left,
             ) => {
                 if !state.is_focused() {
+                    state.drag = Drag::None;
                     return Vec::default();
                 }
 
@@ -208,6 +213,9 @@ impl<'a> TerminalView<'a> {
                 );
             },
             iced::mouse::Event::WheelScrolled { delta } => {
+                let Some(cursor_position) = cursor_position else {
+                    return Vec::default();
+                };
                 let lines = state.wheel_lines(
                     *delta,
                     terminal_content.terminal_size.cell_height,
@@ -236,12 +244,31 @@ impl<'a> TerminalView<'a> {
 
     fn handle_left_button_pressed(
         state: &mut TerminalViewState,
-        terminal_mode: &TermMode,
+        terminal_content: &RenderableContent,
         cursor_position: Point,
         layout_position: Point,
         commands: &mut Vec<Command>,
     ) {
-        let cmd = if terminal_mode.intersects(TermMode::MOUSE_MODE) {
+        let cursor_x = cursor_position.x - layout_position.x;
+        let cursor_y = cursor_position.y - layout_position.y;
+        // Patch: locate the press itself. Upstream reported the cell from
+        // the last tracked move, and moves aren't tracked while the terminal
+        // is unfocused, so a click that focused it landed somewhere stale.
+        state.mouse_position_on_grid = Backend::selection_point(
+            cursor_x,
+            cursor_y,
+            &terminal_content.terminal_size,
+            terminal_content.grid.display_offset(),
+        );
+
+        // Patch: Shift bypasses mouse reporting and selects locally, as in
+        // Alacritty, so text can be copied even when tmux has the mouse.
+        let cmd = if terminal_content
+            .terminal_mode
+            .intersects(TermMode::MOUSE_MODE)
+            && !state.keyboard_modifiers.shift()
+        {
+            state.drag = Drag::Reported;
             Command::MouseReport(
                 MouseButton::LeftButton,
                 state.keyboard_modifiers,
@@ -260,16 +287,10 @@ impl<'a> TerminalView<'a> {
                 mouse::click::Kind::Triple => SelectionType::Lines,
             };
             state.last_click = Some(current_click);
-            Command::SelectStart(
-                selection_type,
-                (
-                    cursor_position.x - layout_position.x,
-                    cursor_position.y - layout_position.y,
-                ),
-            )
+            state.drag = Drag::Selecting;
+            Command::SelectStart(selection_type, (cursor_x, cursor_y))
         };
         commands.push(cmd);
-        state.is_dragged = true;
     }
 
     fn handle_cursor_moved(
@@ -281,27 +302,40 @@ impl<'a> TerminalView<'a> {
     ) {
         let cursor_x = position.x - layout_position.x;
         let cursor_y = position.y - layout_position.y;
-        state.mouse_position_on_grid = Backend::selection_point(
+        let point = Backend::selection_point(
             cursor_x,
             cursor_y,
             &terminal_content.terminal_size,
             terminal_content.grid.display_offset(),
         );
+        let cell_changed = point != state.mouse_position_on_grid;
+        state.mouse_position_on_grid = point;
 
-        // Handle command or selection update based on terminal mode and modifiers
-        if state.is_dragged {
-            let terminal_mode = terminal_content.terminal_mode;
-            let cmd = if terminal_mode.intersects(TermMode::MOUSE_MOTION) {
-                Command::MouseReport(
-                    MouseButton::LeftMove,
-                    state.keyboard_modifiers,
-                    state.mouse_position_on_grid,
-                    true,
-                )
-            } else {
-                Command::SelectUpdate((cursor_x, cursor_y))
-            };
-            commands.push(cmd);
+        match state.drag {
+            // Patch: report the drag in button-event mode (1002) as well as
+            // any-motion mode (1003), as Alacritty does. tmux with `mouse on`
+            // asks for 1002, and upstream only checked 1003, so tmux saw a
+            // press and a release but no motion: no pane-border resizing and
+            // no drag selection. Report once per cell, not once per pixel.
+            Drag::Reported => {
+                let mode = terminal_content.terminal_mode;
+                if cell_changed
+                    && mode.intersects(
+                        TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION,
+                    )
+                {
+                    commands.push(Command::MouseReport(
+                        MouseButton::LeftMove,
+                        state.keyboard_modifiers,
+                        point,
+                        true,
+                    ));
+                }
+            },
+            Drag::Selecting => {
+                commands.push(Command::SelectUpdate((cursor_x, cursor_y)));
+            },
+            Drag::None => {},
         }
 
         // Handle link hover if applicable
@@ -319,9 +353,13 @@ impl<'a> TerminalView<'a> {
         bindings: &BindingsLayout, // Use the actual type of your bindings here
         commands: &mut Vec<Command>,
     ) {
-        state.is_dragged = false;
-
-        if terminal_mode.intersects(TermMode::MOUSE_MODE) {
+        // Patch: release whatever the press started. A reported press gets a
+        // reported release; a local selection (or a press that began outside
+        // the terminal) sends none.
+        let drag = std::mem::take(&mut state.drag);
+        if drag == Drag::Reported
+            && terminal_mode.intersects(TermMode::MOUSE_MODE)
+        {
             commands.push(Command::MouseReport(
                 MouseButton::LeftButton,
                 state.keyboard_modifiers,
@@ -798,13 +836,20 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
         self.handle_focus(event, state, is_cursor_in_layout);
 
         let commands = match event {
-            iced::Event::Mouse(mouse_event) if is_cursor_in_layout => self
-                .handle_mouse_event(
+            // Patch: once a drag starts in the terminal, keep following it
+            // outside, so a release over the sidebar or past the window edge
+            // still ends it. Upstream dropped those events, which left tmux
+            // holding the button down.
+            iced::Event::Mouse(mouse_event)
+                if is_cursor_in_layout || state.drag != Drag::None =>
+            {
+                self.handle_mouse_event(
                     state,
                     layout.position(),
-                    cursor.position().unwrap(),
+                    cursor.position().filter(|_| is_cursor_in_layout),
                     mouse_event,
-                ),
+                )
+            },
             iced::Event::Keyboard(keyboard_event) => {
                 if !state.is_focused() {
                     return;
@@ -858,10 +903,24 @@ impl<'a> From<TerminalView<'a>> for Element<'a, Event, Theme, iced::Renderer> {
     }
 }
 
+/// Patch: what the left button is doing since it was pressed in the grid.
+/// Upstream kept a bare `is_dragged` flag and chose between reporting and
+/// selecting again on every move, so a drag could start one way and end the
+/// other.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Drag {
+    #[default]
+    None,
+    /// The press was reported to the program (tmux with `mouse on`).
+    Reported,
+    /// The press started a local selection.
+    Selecting,
+}
+
 #[derive(Debug, Clone)]
 struct TerminalViewState {
     focus: bool,
-    is_dragged: bool,
+    drag: Drag,
     last_click: Option<mouse::Click>,
     scroll_remainder: f32,
     keyboard_modifiers: Modifiers,
@@ -873,7 +932,7 @@ impl TerminalViewState {
     fn new() -> Self {
         Self {
             focus: false,
-            is_dragged: false,
+            drag: Drag::None,
             last_click: None,
             scroll_remainder: 0.0,
             keyboard_modifiers: Modifiers::empty(),
@@ -1181,20 +1240,25 @@ mod tests {
         use super::*;
         use alacritty_terminal::index::{Column, Line};
 
+        fn content(mode: TermMode) -> RenderableContent {
+            RenderableContent {
+                terminal_mode: mode,
+                ..Default::default()
+            }
+        }
+
         #[test]
-        fn handles_mouse_mode_with_left_click() {
+        fn a_click_in_mouse_mode_reports_the_cell_it_lands_on() {
+            // The last tracked move was elsewhere (moves aren't tracked while
+            // unfocused); the press must still report its own cell.
             let mut state = TerminalViewState::new();
-            let terminal_mode = TermMode::MOUSE_MODE;
-            let layout_position = Point { x: 5.0, y: 5.0 };
-            let cursor_position = Point { x: 100.0, y: 150.0 };
             let mut commands = Vec::new();
-            let _modifiers = Modifiers::empty();
 
             TerminalView::handle_left_button_pressed(
                 &mut state,
-                &terminal_mode,
-                cursor_position,
-                layout_position,
+                &content(TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE),
+                Point { x: 12.0, y: 8.0 },
+                Point { x: 5.0, y: 5.0 },
                 &mut commands,
             );
 
@@ -1203,49 +1267,126 @@ mod tests {
                 commands[0],
                 Command::MouseReport(
                     MouseButton::LeftButton,
-                    _modifiers,
+                    _,
                     TerminalGridPoint {
-                        line: Line(0),
-                        column: Column(0),
+                        line: Line(3),
+                        column: Column(7),
                     },
                     true,
                 )
             ));
-            assert!(state.is_dragged);
+            assert_eq!(state.drag, Drag::Reported);
         }
 
         #[test]
         fn starts_simple_selection_with_left_click() {
-            let terminal_mode = TermMode::SGR_MOUSE;
             let cursor_position = Point { x: 200.0, y: 150.0 };
             let layout_position = Point { x: 50.0, y: 50.0 };
 
-            let cases = vec![
-                SelectionType::Simple,
-                SelectionType::Semantic,
-                SelectionType::Lines,
-            ];
+            let mut state = TerminalViewState::new();
+            let mut commands = Vec::new();
 
-            for _selection_type in cases {
-                let mut state = TerminalViewState::new();
-                state.keyboard_modifiers = Modifiers::SHIFT;
-                let mut commands = Vec::new();
+            TerminalView::handle_left_button_pressed(
+                &mut state,
+                &content(TermMode::SGR_MOUSE),
+                cursor_position,
+                layout_position,
+                &mut commands,
+            );
 
-                TerminalView::handle_left_button_pressed(
+            assert_eq!(commands.len(), 1);
+            assert!(matches!(
+                commands[0],
+                Command::SelectStart(SelectionType::Simple, (150.0, 100.0))
+            ));
+            assert_eq!(state.drag, Drag::Selecting);
+        }
+
+        #[test]
+        fn shift_drag_selects_locally_even_when_tmux_has_the_mouse() {
+            let mut state = TerminalViewState::new();
+            state.keyboard_modifiers = Modifiers::SHIFT;
+            let mut commands = Vec::new();
+            let content = content(TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE);
+
+            TerminalView::handle_left_button_pressed(
+                &mut state,
+                &content,
+                Point { x: 2.0, y: 2.0 },
+                Point::ORIGIN,
+                &mut commands,
+            );
+            TerminalView::handle_cursor_moved(
+                &mut state,
+                &content,
+                &Point { x: 9.0, y: 2.0 },
+                Point::ORIGIN,
+                &mut commands,
+            );
+            TerminalView::handle_button_released(
+                &mut state,
+                &content.terminal_mode,
+                &BindingsLayout::new(),
+                &mut commands,
+            );
+
+            assert_eq!(commands.len(), 2, "{commands:?}");
+            assert!(matches!(
+                commands[0],
+                Command::SelectStart(SelectionType::Simple, (2.0, 2.0))
+            ));
+            assert!(matches!(commands[1], Command::SelectUpdate((9.0, 2.0))));
+            assert_eq!(state.drag, Drag::None);
+        }
+
+        #[test]
+        fn tmux_receives_the_whole_drag_in_button_event_mode() {
+            // tmux with `mouse on` requests button-event tracking (1002) and
+            // SGR encoding (1006). Resizing a pane border or drag-selecting
+            // text needs press, motion and release, each at its own cell.
+            let mut state = TerminalViewState::new();
+            let mut commands = Vec::new();
+            let content = content(TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE);
+            let origin = Point::ORIGIN;
+
+            TerminalView::handle_left_button_pressed(
+                &mut state,
+                &content,
+                Point { x: 4.0, y: 1.0 },
+                origin,
+                &mut commands,
+            );
+            for x in [6.0, 6.5, 8.0] {
+                TerminalView::handle_cursor_moved(
                     &mut state,
-                    &terminal_mode,
-                    cursor_position,
-                    layout_position,
+                    &content,
+                    &Point { x, y: 1.0 },
+                    origin,
                     &mut commands,
                 );
-
-                assert_eq!(commands.len(), 1);
-                assert!(matches!(
-                    commands[0],
-                    Command::SelectStart(_selection_type, (150.0, 100.0))
-                ),);
-                assert!(state.is_dragged);
             }
+            TerminalView::handle_button_released(
+                &mut state,
+                &content.terminal_mode,
+                &BindingsLayout::new(),
+                &mut commands,
+            );
+
+            let reports: Vec<_> = commands
+                .iter()
+                .map(|cmd| match cmd {
+                    Command::MouseReport(button, _, point, pressed) => {
+                        (button.clone() as u8, point.column.0, *pressed)
+                    },
+                    other => panic!("expected a mouse report, got {other:?}"),
+                })
+                .collect();
+            // The move within cell 6 is not repeated.
+            assert_eq!(
+                reports,
+                [(0, 4, true), (32, 6, true), (32, 8, true), (0, 8, false)]
+            );
+            assert_eq!(state.drag, Drag::None);
         }
     }
 
@@ -1318,7 +1459,7 @@ mod tests {
         #[test]
         fn generates_drag_update_command_when_dragged() {
             let mut state = TerminalViewState::new();
-            state.is_dragged = true; // Simulate an ongoing drag operation
+            state.drag = Drag::Selecting; // Simulate an ongoing drag operation
             let terminal_content = RenderableContent::default();
             let layout_position = Point { x: 5.0, y: 5.0 };
             let cursor_position = Point { x: 100.0, y: 150.0 };
@@ -1342,7 +1483,7 @@ mod tests {
         #[test]
         fn generates_drag_update_command_when_dragged_in_mouse_motion_mode() {
             let mut state = TerminalViewState::new();
-            state.is_dragged = true; // Simulate an ongoing drag operation
+            state.drag = Drag::Reported; // Simulate an ongoing drag operation
             let terminal_content = RenderableContent {
                 terminal_mode: TermMode::MOUSE_MOTION,
                 ..Default::default()
@@ -1380,7 +1521,7 @@ mod tests {
         ) {
             let mut state = TerminalViewState::new();
             state.keyboard_modifiers = Modifiers::SHIFT;
-            state.is_dragged = true; // Simulate an ongoing drag operation
+            state.drag = Drag::Selecting; // Simulate an ongoing drag operation
             let terminal_content = RenderableContent {
                 terminal_mode: TermMode::SGR_MOUSE,
                 ..Default::default()
@@ -1408,7 +1549,7 @@ mod tests {
         fn generates_drag_update_and_link_open() {
             let mut state = TerminalViewState::new();
             state.keyboard_modifiers = Modifiers::COMMAND;
-            state.is_dragged = true; // Simulate an ongoing drag operation
+            state.drag = Drag::Selecting; // Simulate an ongoing drag operation
             let terminal_content = RenderableContent {
                 terminal_mode: TermMode::SGR_MOUSE,
                 ..Default::default()
@@ -1450,6 +1591,7 @@ mod tests {
         #[test]
         fn mouse_mode_activated() {
             let mut state = TerminalViewState::new();
+            state.drag = Drag::Reported;
             let terminal_mode = TermMode::MOUSE_MODE;
             let bindings = BindingsLayout::new();
             let mut commands = Vec::new();
@@ -1480,6 +1622,7 @@ mod tests {
         #[test]
         fn link_open_on_button_release() {
             let mut state = TerminalViewState::new();
+            state.drag = Drag::Reported;
             state.keyboard_modifiers = Modifiers::COMMAND;
             let terminal_mode = TermMode::MOUSE_MODE;
             let bindings = BindingsLayout::new();

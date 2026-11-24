@@ -45,6 +45,16 @@ impl App {
                 self.toggle_project(id);
                 Task::none()
             }
+            Message::ShowAllWorktrees(id, show) => {
+                if let Some(project) = self.projects.iter_mut().find(|p| p.id == id) {
+                    project.show_all_worktrees = show;
+                }
+                Task::none()
+            }
+            Message::CloseUnavailableWorktrees => {
+                self.unavailable_list = None;
+                self.focus_terminal()
+            }
             Message::ReorderProject { source, before } => {
                 if let Err(error) = self.reorder_project(source, before) {
                     self.notice = Some(error);
@@ -259,6 +269,12 @@ impl App {
                     }
                     _ => self.update(Message::NewWorktree(target.project)),
                 }
+            }
+            MenuAction::UnavailableWorktrees(_) => {
+                if let Some((project, None)) = self.resolve_action_target(&target) {
+                    self.unavailable_list = Some(project.id);
+                }
+                Task::none()
             }
             MenuAction::Directory(action) => {
                 let Some((project, tree)) = self.resolve_action_target(&target) else {

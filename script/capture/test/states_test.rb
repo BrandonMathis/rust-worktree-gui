@@ -36,12 +36,12 @@ class StatesTest < Minitest::Test
   end
 
   def test_a_sidebar_change_gets_the_default_and_minimum_window_screenshots
-    assert_equal %w[01-workspace 03-compact], selected("src/app/sidebar.rs", "src/app/update.rs")
+    assert_equal %w[01-workspace 03-compact 05-long-list], selected("src/app/sidebar.rs", "src/app/update.rs")
   end
 
   def test_a_managed_worktree_change_gets_the_agent_screenshots
-    assert_equal %w[05-agent-prompt 06-agent-conversation], selected("src/app/agent_pane.rs")
-    assert_equal ["05-agent-prompt"], selected("src/create.rs")
+    assert_equal %w[07-agent-prompt 08-agent-conversation], selected("src/app/agent_pane.rs")
+    assert_equal ["07-agent-prompt"], selected("src/create.rs")
   end
 
   def test_a_style_change_gets_every_screenshot

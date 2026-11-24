@@ -15,12 +15,14 @@
 //! | `pull_requests` | PR badge lookups (one `gh pr list` per project) |
 //! | `sessions` | tmux session activity badges |
 //! | `terminal_pane` | The embedded terminal's connection state |
+//! | `unavailable` | The list of a project's unavailable worktrees |
 //! | `agent_pane` | Managed worktrees: the coding-agent conversation and prompt |
 //! | `creation` | The New Project / New Worktree form (a nested component) |
 //! | `sidebar` | Sidebar state and view |
 //! | `project_list` | Sidebar project drag-and-drop |
 //! | `view` | The window layout, workspace and worktree header |
 //! | `widgets` | Small shared view helpers |
+//! | `perf` | Hooks for the keystroke-latency harness (`--features perf` only) |
 //!
 //! Rust privacy is per module: private fields of `App` are visible here and in
 //! every submodule, while items defined *in* a submodule need `pub(super)` to
@@ -29,12 +31,15 @@
 mod agent_pane;
 mod auto_refresh;
 mod creation;
+#[cfg(feature = "perf")]
+mod perf;
 mod project_list;
 mod projects;
 mod pull_requests;
 mod sessions;
 mod sidebar;
 mod terminal_pane;
+mod unavailable;
 mod update;
 mod view;
 mod widgets;
@@ -118,6 +123,8 @@ pub struct App {
     theme_store: Option<theme::Store>,
     /// The open Settings modal and its unsaved edits.
     settings: Option<settings::Draft>,
+    /// The project whose unavailable worktrees are listed in a modal, if any.
+    unavailable_list: Option<ProjectId>,
     /// Conversations of managed worktrees, by worktree path. Created when a
     /// managed worktree is first opened; a running turn keeps going while
     /// another worktree is shown.
@@ -134,6 +141,8 @@ struct Project {
     /// Worktrees run by a coding agent instead of a terminal (saved).
     managed: BTreeMap<PathBuf, agent::Settings>,
     expanded: bool,
+    /// Lists every worktree instead of the first `WORKTREE_LIMIT` (not saved).
+    show_all_worktrees: bool,
     refresh_id: Option<usize>,
     /// Why the refresh in flight runs; decides which PRs it looks up again.
     refresh_kind: RefreshKind,
@@ -196,6 +205,10 @@ pub enum Message {
     SidebarPreviewExpired(u64),
     Refreshed(usize, Result<Vec<Worktree>, String>),
     ToggleProject(ProjectId),
+    /// Lists all of a project's worktrees (`true`) or only the first few.
+    ShowAllWorktrees(ProjectId, bool),
+    /// Closes the unavailable worktrees modal.
+    CloseUnavailableWorktrees,
     ReorderProject {
         source: ProjectId,
         before: Option<ProjectId>,
@@ -234,6 +247,8 @@ pub enum MenuAction {
     NewWorktree,
     ReplaceAnchor,
     RemoveProject,
+    /// Lists the project's unavailable worktrees; carries their count for the label.
+    UnavailableWorktrees(usize),
 }
 
 impl std::fmt::Display for MenuAction {
@@ -244,6 +259,8 @@ impl std::fmt::Display for MenuAction {
             Self::NewWorktree => f.write_str("New Worktree…"),
             Self::ReplaceAnchor => f.write_str("Replace Anchor…"),
             Self::RemoveProject => f.write_str("Remove Project"),
+            Self::UnavailableWorktrees(1) => f.write_str("1 Unavailable Worktree…"),
+            Self::UnavailableWorktrees(count) => write!(f, "{count} Unavailable Worktrees…"),
         }
     }
 }
@@ -281,6 +298,10 @@ impl App {
             // The same draft the gear button opens, from the loaded palette.
             Some(crate::capture::Open::Settings) => {
                 app.settings = Some(settings::Draft::new(app.palette));
+            }
+            // The first project's list; it fills in once its inventory loads.
+            Some(crate::capture::Open::Unavailable) => {
+                app.unavailable_list = app.projects.first().map(|project| project.id);
             }
             Some(crate::capture::Open::AgentConversation) => {
                 if let Some(target) = crate::capture::target() {
@@ -337,6 +358,7 @@ impl App {
             palette: Palette::default(),
             theme_store: None,
             settings: None,
+            unavailable_list: None,
             agents: BTreeMap::new(),
             agent_models: BTreeMap::new(),
             next_turn_id: 0,
@@ -392,6 +414,8 @@ impl App {
         };
         let settings = if self.settings.is_some() {
             iced::event::listen_with(settings_keys)
+        } else if self.unavailable_list.is_some() {
+            iced::event::listen_with(unavailable::modal_keys)
         } else {
             Subscription::none()
         };

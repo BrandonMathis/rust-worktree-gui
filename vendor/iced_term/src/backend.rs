@@ -4,7 +4,7 @@ use alacritty_terminal::event::{
     Event, EventListener, Notify, OnResize, WindowSize,
 };
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
-use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::grid::{BidirectionalIterator, Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::sync::FairMutex;
@@ -568,9 +568,94 @@ impl Backend {
         point: Point,
         regex: &mut RegexSearch,
     ) -> Option<Match> {
-        let x = visible_regex_match_iter(terminal, regex)
-            .find(|rm| rm.contains(&point));
-        x
+        url_at(terminal, point, regex)
+    }
+}
+
+/// The URL under `point`, trimmed the way Alacritty trims hint matches.
+///
+/// Patch: upstream iced_term returned the raw regex match, so a URL written
+/// in parentheses, `(https://example.com/pull/1)`, opened with the closing
+/// `)` attached. Alacritty runs `hint_post_processing` on every match.
+fn url_at(
+    term: &Term<EventProxy>,
+    point: Point,
+    regex: &mut RegexSearch,
+) -> Option<Match> {
+    let regex_match =
+        visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))?;
+    hint_post_processing(term, regex_match).filter(|rm| rm.contains(&point))
+}
+
+/// Copied from alacritty/src/display/hint.rs:
+/// Drop unbalanced closing brackets, and trailing characters that are
+/// probably punctuation around the URL rather than part of it.
+fn hint_post_processing(
+    term: &Term<EventProxy>,
+    regex_match: Match,
+) -> Option<Match> {
+    let mut iter = term.grid().iter_from(*regex_match.start());
+
+    let mut c = iter.cell().c;
+
+    // Truncate uneven number of brackets.
+    let end = *regex_match.end();
+    let mut open_parents = 0;
+    let mut open_brackets = 0;
+    loop {
+        match c {
+            '(' => open_parents += 1,
+            '[' => open_brackets += 1,
+            ')' => {
+                if open_parents == 0 {
+                    iter.prev();
+                    break;
+                } else {
+                    open_parents -= 1;
+                }
+            },
+            ']' => {
+                if open_brackets == 0 {
+                    iter.prev();
+                    break;
+                } else {
+                    open_brackets -= 1;
+                }
+            },
+            _ => (),
+        }
+
+        if iter.point() == end {
+            break;
+        }
+
+        match iter.next() {
+            Some(indexed) => c = indexed.cell.c,
+            None => break,
+        }
+    }
+
+    // Patch: after dropping a `)` or `]`, look at the cell now at the end, so
+    // `(see https://example.com.)` loses the `.` as well as the `)`.
+    c = iter.cell().c;
+
+    // Truncate trailing characters which are likely to be delimiters.
+    let start = *regex_match.start();
+    while iter.point() != start {
+        if !matches!(c, '.' | ',' | ':' | ';' | '?' | '!' | '(' | '[' | '\'') {
+            break;
+        }
+
+        match iter.prev() {
+            Some(indexed) => c = indexed.cell.c,
+            None => break,
+        }
+    }
+
+    if start > iter.point() {
+        None
+    } else {
+        Some(start..=iter.point())
     }
 }
 
@@ -690,6 +775,63 @@ mod tests {
         proxy.send_event(Event::Wakeup);
         assert!(matches!(receiver.try_recv(), Some(Event::Wakeup)));
         assert!(receiver.try_recv().is_none());
+    }
+
+    /// The URL a ⌘-click at `column` of a one-line terminal showing `line`
+    /// would open.
+    fn url_clicked_at(line: &str, column: usize) -> Option<String> {
+        let (proxy, _receiver) = event_channel();
+        let size = TermSize::new(200, 1);
+        let mut term = Term::new(term::Config::default(), &size, proxy);
+        let mut parser: alacritty_terminal::vte::ansi::Processor =
+            alacritty_terminal::vte::ansi::Processor::new();
+        parser.advance(&mut term, line.as_bytes());
+
+        let mut regex = RegexSearch::new(URL_REGEX).unwrap();
+        let point = Point::new(Line(0), Column(column));
+        let range = url_at(&term, point, &mut regex)?;
+        Some(
+            (range.start().column.0..=range.end().column.0)
+                .map(|col| term.grid()[Line(0)][Column(col)].c)
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn links_in_parentheses_open_without_the_closing_parenthesis() {
+        let line = "- Backend #647 (https://github.com/o/r/pull/647) — saves";
+        let column = line.find("github").unwrap();
+        assert_eq!(
+            url_clicked_at(line, column).as_deref(),
+            Some("https://github.com/o/r/pull/647")
+        );
+    }
+
+    #[test]
+    fn links_keep_balanced_parentheses_and_drop_trailing_punctuation() {
+        let wiki = "see https://en.wikipedia.org/wiki/Rust_(language).";
+        assert_eq!(
+            url_clicked_at(wiki, 10).as_deref(),
+            Some("https://en.wikipedia.org/wiki/Rust_(language)")
+        );
+
+        let sentence = "(read https://example.com/docs.) next";
+        assert_eq!(
+            url_clicked_at(sentence, 10).as_deref(),
+            Some("https://example.com/docs")
+        );
+
+        let markdown = "[PR](https://github.com/o/r/pull/1)";
+        assert_eq!(
+            url_clicked_at(markdown, 10).as_deref(),
+            Some("https://github.com/o/r/pull/1")
+        );
+    }
+
+    #[test]
+    fn clicking_the_trimmed_parenthesis_opens_nothing() {
+        let line = "(https://example.com)";
+        assert_eq!(url_clicked_at(line, line.len() - 1), None);
     }
 
     #[test]

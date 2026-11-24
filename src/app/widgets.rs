@@ -5,12 +5,13 @@ use crate::actions::DirectoryAction;
 use crate::style::{self, Button, Panel};
 use crate::theme::Palette;
 use crate::{icons, row_menu};
-use iced::widget::{Svg, button, container, hover, pick_list, text, tooltip};
+use iced::widget::{Svg, button, container, hover, text, tooltip};
 use iced::{Element, Fill};
 
-/// The actions offered for a worktree (`worktree == true`) or a project. The
-/// sidebar's ⋮ menu and the header's Actions menu show the same list.
-pub(super) fn menu_actions(worktree: bool) -> Vec<MenuAction> {
+/// The actions offered in a sidebar row's ⋮ menu, for a worktree
+/// (`worktree == true`) or a project. A project with `unavailable` worktrees
+/// (hidden from the sidebar) also gets an item that lists them.
+pub(super) fn menu_actions(worktree: bool, unavailable: usize) -> Vec<MenuAction> {
     let mut actions = Vec::new();
     if !worktree {
         actions.push(MenuAction::NewWorktree);
@@ -19,20 +20,25 @@ pub(super) fn menu_actions(worktree: bool) -> Vec<MenuAction> {
     if worktree {
         actions.push(MenuAction::RenameWorktree);
     } else {
+        if unavailable > 0 {
+            actions.push(MenuAction::UnavailableWorktrees(unavailable));
+        }
         actions.extend([MenuAction::ReplaceAnchor, MenuAction::RemoveProject]);
     }
     actions
 }
 
 /// Overlays the ⋮ row menu on the right edge of `base` while it is hovered.
+/// `unavailable` counts a project's unavailable worktrees (0 for a worktree row).
 pub(super) fn with_row_menu<'a>(
     base: impl Into<Element<'a, Message>>,
     target: Selection,
+    unavailable: usize,
     p: Palette,
 ) -> Element<'a, Message> {
     let menu = row_menu::show(
         format!("{target:?}"),
-        menu_actions(target.worktree.is_some()),
+        menu_actions(target.worktree.is_some(), unavailable),
         move |action| Message::MenuAction(target.clone(), action),
         p,
     );
@@ -43,22 +49,6 @@ pub(super) fn with_row_menu<'a>(
             .align_right(Fill)
             .center_y(Fill),
     )
-}
-
-/// The header's Actions drop-down.
-pub(super) fn actions_menu(target: Selection, p: Palette) -> Element<'static, Message> {
-    pick_list(
-        menu_actions(target.worktree.is_some()),
-        None::<MenuAction>,
-        move |action| Message::MenuAction(target.clone(), action),
-    )
-    .placeholder("Actions")
-    .width(164)
-    .text_size(12)
-    .padding([4, 7])
-    .style(style::action_picker(p))
-    .menu_style(style::action_menu(p))
-    .into()
 }
 
 /// A label that never wraps; overflow is clipped.

@@ -166,10 +166,13 @@ class Fixtures
 
     git(repo, "worktree", "add", "-q", File.join(root, "acme-api-release"), "release/2.4")
 
-    # A worktree whose folder was deleted outside Git shows as unavailable.
-    spike = File.join(root, "acme-api-grpc-spike")
-    git(repo, "worktree", "add", "-q", "-b", "spike/grpc", spike)
-    FileUtils.rm_rf(spike)
+    # Worktrees whose folders were deleted outside Git are unavailable: the
+    # sidebar leaves them out and 06-unavailable lists them.
+    %w[spike/grpc spike/graphql chore/old-ci].each do |branch|
+      dir = File.join(root, "acme-api-#{branch.tr('/', '-')}")
+      git(repo, "worktree", "add", "-q", "-b", branch, dir)
+      FileUtils.rm_rf(dir)
+    end
 
     @projects << { root: path("acme-api"), names: { path("acme-api-session-tokens") => "Session tokens" } }
   end
@@ -205,6 +208,11 @@ class Fixtures
   def build_docs_site
     repo = new_repo("docs-site")
     commit(repo, "Start the docs site", "index.md" => "# Acme docs\n")
+    # More worktrees than the sidebar lists before "Show N more" (05-long-list).
+    DOCS_PAGES.each_with_index do |page, index|
+      dir = File.join(root, format("docs-site-%02d-%s", index + 1, page))
+      git(repo, "worktree", "add", "-q", "-b", "docs/#{page}", dir)
+    end
     @projects << { root: path("docs-site"), names: {} }
   end
 
@@ -393,6 +401,11 @@ log "done"
 # --- Fixture file contents ---------------------------------------------------
 
 BEGIN {
+  DOCS_PAGES = %w[
+    install quickstart auth rate-limits errors webhooks pagination sdks changelog
+    migration glossary faq
+  ].freeze
+
   CARGO_TOML = <<~TOML
     [package]
     name = "acme-api"

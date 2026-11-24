@@ -53,8 +53,9 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # --workspace includes the vendored iced_term (also a default member).
-      - run: cargo clippy --locked --workspace --all-targets --features rust-worktree-gui/capture -- -D warnings
+      # --workspace includes the vendored iced_term (also a default member);
+      # the features add the screenshot hooks and the latency harness.
+      - run: cargo clippy --locked --workspace --all-targets --features rust-worktree-gui/capture,rust-worktree-gui/perf -- -D warnings
 
   docs:
     name: Docs
