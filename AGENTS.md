@@ -33,7 +33,7 @@ ruby script/capture/test/states_test.rb              # tests for which screensho
 
 ## Screenshots
 
-`.github/workflows/screenshots.yml` posts screenshots on PRs that change how the app looks, of only the states that show the files the PR changes. Dependency updates (`Cargo.toml`, `Cargo.lock`) and changes no state shows get none. It builds with `--features capture` (startup hooks in `src/capture.rs`, off in normal builds) and runs `script/capture/capture.rb`, which creates fixture repos, a private tmux server with vim and shell splits, and an isolated `HOME`. It never touches your bookmarks, tmux sessions or dotfiles. Run it locally to check a visual change (a window appears briefly; your terminal needs Screen Recording permission):
+`.github/workflows/screenshots.yml` posts screenshots on PRs that change how the app looks, of only the states that show the files the PR changes. Dependency updates (`Cargo.toml`, `Cargo.lock`) and changes no state shows get none. The PNGs are workflow artifacts that the PR comment links to; never commit them or push them to a branch. It builds with `--features capture` (startup hooks in `src/capture.rs`, off in normal builds) and runs `script/capture/capture.rb`, which creates fixture repos, a private tmux server with vim and shell splits, and an isolated `HOME`. It never touches your bookmarks, tmux sessions or dotfiles. Run it locally to check a visual change (a window appears briefly; your terminal needs Screen Recording permission):
 
 ```sh
 cargo build --locked --features capture && ruby script/capture/capture.rb   # PNGs in target/screenshots
