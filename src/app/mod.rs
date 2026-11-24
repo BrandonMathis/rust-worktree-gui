@@ -21,6 +21,7 @@
 //! | `project_list` | Sidebar project drag-and-drop |
 //! | `view` | The window layout, workspace and worktree header |
 //! | `widgets` | Small shared view helpers |
+//! | `perf` | Hooks for the keystroke-latency harness (`--features perf` only) |
 //!
 //! Rust privacy is per module: private fields of `App` are visible here and in
 //! every submodule, while items defined *in* a submodule need `pub(super)` to
@@ -28,6 +29,8 @@
 
 mod auto_refresh;
 mod creation;
+#[cfg(feature = "perf")]
+mod perf;
 mod project_list;
 mod projects;
 mod pull_requests;
