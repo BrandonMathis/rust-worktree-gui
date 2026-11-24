@@ -5,7 +5,7 @@
 # stops the copy running from the destination folder, swaps the bundle in and
 # relaunches it. Standard library only, like the other helper scripts.
 #
-#   ruby .claude/skills/new-release/release.rb [--dest DIR] [--no-open] [--skip-fetch] [--allow-behind]
+#   ruby .agents/skills/new-release/release.rb [--dest DIR] [--no-open] [--skip-fetch] [--allow-behind]
 #
 # Quitting the app never loses terminal state: every terminal is a tmux session
 # on the `-L worktree-browser` socket, and the relaunched app reattaches to it.

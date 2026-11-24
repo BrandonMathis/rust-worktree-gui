@@ -15,7 +15,7 @@ From the root of the checkout to build (the main checkout or any worktree; it
 builds whatever is checked out there):
 
 ```sh
-ruby .claude/skills/new-release/release.rb
+ruby .agents/skills/new-release/release.rb
 ```
 
 The skill is committed with the project, so every checkout and worktree has

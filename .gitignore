@@ -1,7 +1,8 @@
 /target/
 .DS_Store
-# Track project skills so every checkout and worktree has them; keep the rest
-# of .claude (local settings, worktrees) ignored, overriding global ignores.
+# Project skills live in .agents/skills. Track the .claude/skills symlink to them
+# (Claude Code reads that path) and keep the rest of .claude ignored, overriding
+# a global ignore of .claude.
 !/.claude/
 /.claude/*
-!/.claude/skills/
+!/.claude/skills
