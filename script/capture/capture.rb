@@ -187,9 +187,19 @@ class Fixtures
     write(color, "src/components/Badge.tsx", BADGE_TSX)
 
     git(repo, "worktree", "add", "-q", "-b", "chore/drop-ie11", File.join(root, "design-system-ie11"))
+    # Managed worktrees: run by a coding agent instead of a terminal.
+    git(repo, "worktree", "add", "-q", "-b", "agent/contrast-check", File.join(root, "design-system-contrast"))
+    git(repo, "worktree", "add", "-q", "-b", "agent/storybook", File.join(root, "design-system-storybook"))
     git(repo, "worktree", "add", "-q", "--detach", File.join(root, "design-system-v1"), "HEAD~1")
 
-    @projects << { root: path("design-system"), names: {} }
+    @projects << {
+      root: path("design-system"),
+      names: { path("design-system-contrast") => "Contrast check" },
+      managed: [
+        { path: path("design-system-contrast"), harness: "claude", model: "opus", thinking: "high" },
+        { path: path("design-system-storybook"), harness: "codex" }
+      ]
+    }
   end
 
   def build_docs_site
@@ -204,7 +214,8 @@ class Fixtures
       {
         anchor: project[:root],
         common_dir: File.join(project[:root], ".git"),
-        worktree_names: project[:names].map { |p, name| { path: p, name: name } }
+        worktree_names: project[:names].map { |p, name| { path: p, name: name } },
+        managed: project.fetch(:managed, [])
       }
     end
     dir = File.join(home, "Library/Application Support/Worktree Browser")

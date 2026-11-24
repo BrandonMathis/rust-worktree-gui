@@ -39,6 +39,11 @@ class StatesTest < Minitest::Test
     assert_equal %w[01-workspace 03-compact], selected("src/app/sidebar.rs", "src/app/update.rs")
   end
 
+  def test_a_managed_worktree_change_gets_the_agent_screenshots
+    assert_equal %w[05-agent-prompt 06-agent-conversation], selected("src/app/agent_pane.rs")
+    assert_equal ["05-agent-prompt"], selected("src/create.rs")
+  end
+
   def test_a_style_change_gets_every_screenshot
     assert_equal all_states, selected("src/style.rs")
   end

@@ -102,3 +102,32 @@ icon!(
     bell,
     r#"<path d="M6 13.5V9a4 4 0 0 1 8 0v4.5l1.5 1.5h-11zM8.5 17h3"/>"#
 );
+
+// Coding-agent harnesses for managed worktrees: simple original glyphs, not logos.
+// Claude: a six-point spark.
+icon!(
+    harness_claude,
+    r#"<path d="M10 2.5v15M3.5 6.25l13 7.5M3.5 13.75l13-7.5"/>"#
+);
+// Codex: a shell prompt in a rounded square.
+icon!(
+    harness_codex,
+    r#"<rect x="2.5" y="3.5" width="15" height="13" rx="3"/><path d="m6 8 2.5 2L6 12m4.5 0H14"/>"#
+);
+// Pi: the letter π.
+icon!(
+    harness_pi,
+    r#"<path d="M3.5 6.5h13M7.5 6.5V16M12.5 6.5v7.5q0 2 2 2"/>"#
+);
+// A finished step in an expanded activity group.
+icon!(check, r#"<path d="m5 10.5 3.2 3L15 6.5"/>"#);
+
+/// A harness's icon in its color.
+pub fn harness<'a>(harness: crate::agent::Harness, size: u32, p: Palette) -> Svg<'a> {
+    use crate::agent::Harness;
+    match harness {
+        Harness::Claude => harness_claude(size, p.orange),
+        Harness::Codex => harness_codex(size, p.green),
+        Harness::Pi => harness_pi(size, p.pink),
+    }
+}

@@ -268,7 +268,11 @@ impl App {
             worktree: Some(tree.path.clone()),
         };
         let editor = self.rename_editor(&target, tree.label(), false);
-        let (terminal_status, body) = self.terminal_pane(tree, corners);
+        // A managed worktree shows its coding agent where the terminal would be.
+        let (terminal_status, body) = match project.managed.get(&tree.path) {
+            Some(settings) => self.agent_workspace(tree, settings),
+            None => self.terminal_pane(tree, corners),
+        };
         let heading = row![
             self.show_sidebar_button(),
             title,

@@ -33,6 +33,8 @@ pub struct Draft {
     pub name: String,
     pub branch: String,
     pub base: String,
+    /// Run the new worktree with a coding agent instead of a terminal.
+    pub managed: bool,
     pub submitting: bool,
 }
 
@@ -44,6 +46,7 @@ pub enum Message {
     Name(String),
     Branch(String),
     Base(String),
+    Managed(bool),
     Confirm,
     Cancel,
 }
@@ -62,6 +65,7 @@ impl Draft {
             Message::Name(name) => self.name = name,
             Message::Branch(branch) => self.branch = branch,
             Message::Base(base) => self.base = base,
+            Message::Managed(managed) => self.managed = managed,
             Message::Confirm => return Some(Outcome::Confirm),
             Message::Cancel => return Some(Outcome::Cancel),
         }
@@ -75,6 +79,7 @@ impl Draft {
             name: String::new(),
             branch: String::new(),
             base: "HEAD".into(),
+            managed: false,
             submitting: false,
         }
     }

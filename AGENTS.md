@@ -54,6 +54,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `app/pull_requests.rs` | PR lookups per worktree and the header badge. |
 | `app/sessions.rs` | tmux session badges (live, new output, bell) from a background `list-windows -a` poll. |
 | `app/auto_refresh.rs`, `watch.rs` | Automatic refresh on window focus and when a repository's Git metadata fingerprint changes (polled with `stat`). |
+| `app/agent_pane.rs` | Managed worktrees: the coding-agent conversation, prompt queue and harness/model/thinking pickers shown instead of the terminal. |
 | `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, switching the running client to another worktree (`switch-client`, with a full-connect fallback), and the header status and pane. |
 | `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
 | `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |
@@ -63,6 +64,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `theme.rs` | The palette (eleven Dracula colors), presets, hex/HSV conversion, and the saved `theme.json`. |
 | `settings.rs`, `color_wheel.rs` | Full-window Settings modal (a nested Elm component returning an `Outcome`); canvas hue/saturation wheel. |
 | `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup, read-only session activity. |
+| `agent.rs` | Coding-agent harnesses (Claude Code, Codex, Pi): model lists, the command line for a turn, parsing each harness's JSON stream into one `Event` type, the `Transcript`, and `run_turn` (a streamed subprocess). |
 | `terminal.rs` | Wraps the `iced_term` widget (`Console`): the worktree it shows and its tmux client's pid. |
 | `terminal_config.rs` | Reads the user's Alacritty TOML (search order, imports, font, colors, bindings) and Core Text cell metrics. |
 | `pull_request.rs` | One `gh pr list` per project, matching PRs to worktrees by branch, validation of the HTTPS PR URL, and the per-project `Badges`. |
@@ -78,7 +80,8 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 ## Rules
 
 - **Never commit code review documents.** Review findings, audits and refactor wish lists (for example a `CODE_REVIEW.md`) must not be checked into source control. Keep them out of the repository (in the PR, an issue, or an untracked local file) and record the outcome as FRD rows and tests instead.
-- **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names and the theme palette are the only persisted state.
+- **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names, managed-worktree settings (harness, model, thinking level and the harness's session id) and the theme palette are the only persisted state.
+- **Managed worktrees** run one harness process per turn (`claude -p`, `codex exec`, `pi -p`) in their JSON modes, from the worktree, resuming the saved session id. They run unattended, so permissions are fixed in `agent::invocation` (Claude `auto` mode, Codex `workspace-write` sandbox); don't loosen them to a bypass mode. Stopping a turn kills only the harness the app started.
 - **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Removing a project removes only the bookmark.
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; paths may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.
 - **No blocking work on the UI thread.** Run git, tmux, `gh` and `open` through `background(...)` or `Task::perform`, and return typed results as a `Message`. Guard async results with a request or epoch id so stale answers are ignored. Follow the existing patterns: `pr_request_id`, `refresh_id`, the `Connecting(id)` console state.

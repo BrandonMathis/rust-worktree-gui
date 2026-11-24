@@ -100,6 +100,21 @@ module CaptureStates
       size: "1120x720",
       covers: %w[src/settings.rs src/color_wheel.rs],
       open: "settings"
+    },
+    {
+      name: "05-agent-prompt",
+      title: "Managed worktree — a new conversation's prompt, harness, model and thinking",
+      size: "1120x720",
+      covers: %w[src/agent.rs src/app/agent_pane.rs src/app/creation.rs src/create.rs],
+      project: 1, worktree: "design-system-storybook"
+    },
+    {
+      name: "06-agent-conversation",
+      title: "Managed worktree — collapsed tool calls and a queued follow-up",
+      size: "1120x720",
+      covers: %w[src/agent.rs src/app/agent_pane.rs],
+      project: 1, worktree: "design-system-contrast",
+      open: "agent-conversation"
     }
   ].freeze
 

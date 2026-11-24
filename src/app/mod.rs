@@ -15,6 +15,7 @@
 //! | `pull_requests` | PR badge lookups (one `gh pr list` per project) |
 //! | `sessions` | tmux session activity badges |
 //! | `terminal_pane` | The embedded terminal's connection state |
+//! | `agent_pane` | Managed worktrees: the coding-agent conversation and prompt |
 //! | `creation` | The New Project / New Worktree form (a nested component) |
 //! | `sidebar` | Sidebar state and view |
 //! | `project_list` | Sidebar project drag-and-drop |
@@ -25,6 +26,7 @@
 //! every submodule, while items defined *in* a submodule need `pub(super)` to
 //! be seen here or in a sibling.
 
+mod agent_pane;
 mod auto_refresh;
 mod creation;
 mod project_list;
@@ -42,6 +44,7 @@ mod tests;
 
 use crate::{
     actions::DirectoryAction,
+    agent,
     config::{ProjectBookmark, Store},
     create::{self, ProjectChoice},
     git::{Checkout, Worktree},
@@ -53,6 +56,7 @@ use crate::{
     tmux::SessionActivity,
     watch::Fingerprint,
 };
+use agent_pane::{AgentMessage, AgentPane, ModelList};
 use iced::{Subscription, Task};
 use projects::RefreshKind;
 use sessions::Session;
@@ -114,12 +118,21 @@ pub struct App {
     theme_store: Option<theme::Store>,
     /// The open Settings modal and its unsaved edits.
     settings: Option<settings::Draft>,
+    /// Conversations of managed worktrees, by worktree path. Created when a
+    /// managed worktree is first opened; a running turn keeps going while
+    /// another worktree is shown.
+    agents: BTreeMap<PathBuf, AgentPane>,
+    /// Each harness's models, listed once per launch.
+    agent_models: BTreeMap<agent::Harness, ModelList>,
+    next_turn_id: u64,
 }
 
 struct Project {
     id: ProjectId,
     checkout: Checkout,
     worktree_names: BTreeMap<PathBuf, String>,
+    /// Worktrees run by a coding agent instead of a terminal (saved).
+    managed: BTreeMap<PathBuf, agent::Settings>,
     expanded: bool,
     refresh_id: Option<usize>,
     /// Why the refresh in flight runs; decides which PRs it looks up again.
@@ -210,6 +223,8 @@ pub enum Message {
     DismissNotice,
     OpenSettings,
     Settings(settings::Message),
+    /// A managed worktree's prompt, settings or running turn.
+    Agent(AgentMessage),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -262,9 +277,18 @@ impl App {
             app.open_after_load(target);
         }
         #[cfg(feature = "capture")]
-        if let Some(crate::capture::Open::Settings) = crate::capture::open() {
+        match crate::capture::open() {
             // The same draft the gear button opens, from the loaded palette.
-            app.settings = Some(settings::Draft::new(app.palette));
+            Some(crate::capture::Open::Settings) => {
+                app.settings = Some(settings::Draft::new(app.palette));
+            }
+            Some(crate::capture::Open::AgentConversation) => {
+                if let Some(target) = crate::capture::target() {
+                    app.agents
+                        .insert(target.worktree, AgentPane::sample_conversation());
+                }
+            }
+            None => {}
         }
         (app, task)
     }
@@ -313,6 +337,9 @@ impl App {
             palette: Palette::default(),
             theme_store: None,
             settings: None,
+            agents: BTreeMap::new(),
+            agent_models: BTreeMap::new(),
+            next_turn_id: 0,
         };
         for project in projects {
             app.insert_project(project);

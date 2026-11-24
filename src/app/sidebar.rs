@@ -89,6 +89,8 @@ pub(super) enum WorktreeIcon {
     Unavailable,
     Main,
     Worktree,
+    /// Run by a coding agent: the harness's icon.
+    Managed(crate::agent::Harness),
     PullRequest(pull_request::Status),
 }
 
@@ -98,6 +100,7 @@ impl WorktreeIcon {
             Self::Unavailable => icons::warning(size, p.red),
             Self::Main => icons::home(size, p.orange),
             Self::Worktree => icons::branch(size, p.cyan),
+            Self::Managed(harness) => icons::harness(harness, size, p),
             Self::PullRequest(status) => icons::pr_status(size, status, p),
         }
     }
@@ -105,7 +108,8 @@ impl WorktreeIcon {
 
 impl Project {
     /// Picks the single sidebar icon for `tree`. Precedence: unavailable, then
-    /// the main checkout, then the PR state, then a plain worktree.
+    /// the main checkout, then a managed worktree's harness, then the PR
+    /// state, then a plain worktree.
     pub(super) fn worktree_icon(&self, tree: &Worktree) -> WorktreeIcon {
         // `git worktree list` always lists the main worktree first.
         let is_main = self.worktrees().first().map(|main| &main.path) == Some(&tree.path);
@@ -113,6 +117,8 @@ impl Project {
             WorktreeIcon::Unavailable
         } else if is_main {
             WorktreeIcon::Main
+        } else if let Some(settings) = self.managed.get(&tree.path) {
+            WorktreeIcon::Managed(settings.harness)
         } else if let Some(pr) = self.pull_request(&tree.path) {
             WorktreeIcon::PullRequest(pr.status)
         } else {
@@ -300,6 +306,13 @@ impl App {
                 if let Some(badge) = session {
                     label = label.push(badge.view(11, p));
                 }
+                let agent_running = self
+                    .agents
+                    .get(&tree.path)
+                    .is_some_and(|pane| pane.is_running());
+                if agent_running {
+                    label = label.push(icons::connecting(11, p.purple));
+                }
                 let mut details = column![
                     text(project.worktree_name(tree)).size(12),
                     text(format!("{}  ·  {}", tree.label(), tree.path.display()))
@@ -312,6 +325,17 @@ impl App {
                 }
                 if let Some(badge) = session {
                     details = details.push(text(badge.label()).size(11).color(p.muted()));
+                }
+                if let Some(settings) = project.managed.get(&tree.path) {
+                    details = details.push(
+                        text(if agent_running {
+                            format!("Managed by {}: working…", settings.harness)
+                        } else {
+                            format!("Managed by {}", settings.harness)
+                        })
+                        .size(11)
+                        .color(p.muted()),
+                    );
                 }
                 let label = tooltip(
                     label,

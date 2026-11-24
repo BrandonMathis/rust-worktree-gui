@@ -24,6 +24,7 @@ impl Project {
         ProjectBookmark {
             checkout: self.checkout.clone(),
             worktree_names: self.worktree_names.clone(),
+            managed: self.managed.clone(),
         }
     }
 
@@ -58,6 +59,7 @@ impl App {
             id,
             checkout: bookmark.checkout,
             worktree_names: bookmark.worktree_names,
+            managed: bookmark.managed,
             expanded: false,
             refresh_id: None,
             refresh_kind: RefreshKind::default(),
@@ -276,7 +278,10 @@ impl App {
         Ok(())
     }
 
-    fn save(&self, projects: impl IntoIterator<Item = ProjectBookmark>) -> Result<(), String> {
+    pub(super) fn save(
+        &self,
+        projects: impl IntoIterator<Item = ProjectBookmark>,
+    ) -> Result<(), String> {
         self.store.as_ref().ok_or("Bookmarks are unavailable. Check the Application Support file and restart the app.")?.save(projects)
     }
 

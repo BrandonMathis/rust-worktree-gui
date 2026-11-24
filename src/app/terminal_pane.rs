@@ -55,12 +55,12 @@ impl ConsoleState {
 }
 
 impl App {
-    /// The selected worktree, if it is one that can have a terminal.
+    /// The selected worktree, if it is one that can have a terminal: available,
+    /// and not managed by a coding agent.
     fn selected_worktree(&self) -> Option<(&Project, &Worktree)> {
         let (project, selection) = self.selected()?;
         let tree = project.worktree(selection.worktree.as_deref()?)?;
-        tree.unavailable_reason()
-            .is_none()
+        (tree.unavailable_reason().is_none() && !project.is_managed(&tree.path))
             .then_some((project, tree))
     }
 
@@ -85,8 +85,12 @@ impl App {
     /// Connects the terminal to the selected worktree's tmux session. If a
     /// terminal is already running, it focuses it (same worktree) or switches
     /// its client (another worktree). Does nothing while connecting or
-    /// switching, or for a project overview or an unavailable worktree.
+    /// switching, or for a project overview or an unavailable worktree. A
+    /// managed worktree opens its agent prompt instead.
     pub(super) fn connect(&mut self) -> Task<Message> {
+        if self.selected_managed().is_some() {
+            return self.open_agent();
+        }
         if matches!(
             self.console,
             ConsoleState::Connecting(_) | ConsoleState::Switching { .. }
@@ -230,6 +234,7 @@ impl App {
             && self.settings.is_none()
             && self.creation.is_none()
             && self.worktree_name_draft.is_none()
+            && !self.paste_into_composer(path)
             && let ConsoleState::Attached(console) = &mut self.console
         {
             console.paste_path(path);
@@ -242,9 +247,16 @@ impl App {
         }
     }
 
-    /// Gives keyboard focus back to the terminal, unless a text field (rename
-    /// or the creation form) should keep it.
+    /// Gives keyboard focus back to the terminal (or a managed worktree's
+    /// prompt), unless a text field (rename or the creation form) should keep it.
     pub(super) fn focus_terminal(&self) -> Task<Message> {
+        if self.selected_managed().is_some() {
+            return if self.worktree_name_draft.is_none() && self.creation.is_none() {
+                self.focus_composer()
+            } else {
+                Task::none()
+            };
+        }
         match &self.console {
             ConsoleState::Attached(console)
                 if console.is_open()

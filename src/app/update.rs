@@ -135,6 +135,7 @@ impl App {
                 Task::none()
             }
             Message::Settings(message) => self.settings(message),
+            Message::Agent(message) => self.agent_message(message),
         }
     }
 
@@ -143,13 +144,13 @@ impl App {
             return Task::none();
         }
         self.pending_confirmation = Some(Confirmation::Quit);
-        confirmation::show(
-            id,
-            "Quit Worktree Browser?",
-            "Your tmux sessions will keep running.".into(),
-            "Quit",
-        )
-        .map(|confirmed| Message::ConfirmationAnswered(Confirmation::Quit, confirmed))
+        let detail = if self.agents_running() {
+            "Your tmux sessions will keep running. Running agents will be stopped."
+        } else {
+            "Your tmux sessions will keep running."
+        };
+        confirmation::show(id, "Quit Worktree Browser?", detail.into(), "Quit")
+            .map(|confirmed| Message::ConfirmationAnswered(Confirmation::Quit, confirmed))
     }
 
     fn request_project_removal(&mut self, id: ProjectId, name: String) -> Task<Message> {

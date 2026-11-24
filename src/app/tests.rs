@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent;
 use crate::git_fixtures::{fixture, run_git};
 
 #[test]
@@ -1127,4 +1128,249 @@ fn selecting_an_unavailable_worktree_detaches_instead_of_switching() {
     let task = app.update(Message::SelectWorktree(id, linked));
     assert_eq!(task.units(), 0);
     assert!(matches!(app.console, ConsoleState::Detached));
+}
+
+/// A managed worktree (the linked checkout of `app_with_linked_checkout`) with
+/// default (Claude) settings, selected.
+fn app_with_managed_worktree() -> (tempfile::TempDir, App, ProjectId, PathBuf) {
+    let (tmp, mut app, id, _root, linked) = app_with_linked_checkout();
+    app.set_managed(id, &linked, Some(agent::Settings::default()))
+        .unwrap();
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    (tmp, app, id, linked)
+}
+
+fn type_prompt(app: &mut App, path: &Path, prompt: &str) {
+    use iced::widget::text_editor::{Action, Edit};
+    let _ = app.update(Message::Agent(AgentMessage::Edit(
+        path.to_path_buf(),
+        Action::Edit(Edit::Paste(std::sync::Arc::new(prompt.into()))),
+    )));
+}
+
+fn send(app: &mut App, path: &Path, prompt: &str) -> Task<Message> {
+    type_prompt(app, path, prompt);
+    app.update(Message::Agent(AgentMessage::Submit(path.to_path_buf())))
+}
+
+fn running_turn(app: &App, path: &Path) -> Option<u64> {
+    app.agents[path].run.as_ref().map(|run| run.id)
+}
+
+fn user_prompts(app: &App, path: &Path) -> Vec<String> {
+    app.agents[path]
+        .transcript
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            agent::Entry::User(prompt) => Some(prompt.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn managed_worktrees_open_an_agent_prompt_instead_of_a_terminal() {
+    let (_tmp, mut app, id, linked) = app_with_managed_worktree();
+    assert!(matches!(app.console, ConsoleState::Detached));
+    assert!(app.agents.contains_key(&linked));
+    assert!(matches!(
+        app.agent_models.get(&agent::Harness::Claude),
+        Some(ModelList::Loading)
+    ));
+    // Connect (the header's Reconnect, or selecting it again) never starts tmux.
+    let _ = app.update(Message::Reconnect);
+    assert!(matches!(app.console, ConsoleState::Detached));
+    assert_eq!(
+        app.projects[0].worktree_icon(app.projects[0].worktree(&linked).unwrap()),
+        WorktreeIcon::Managed(agent::Harness::Claude)
+    );
+    let _ = id;
+}
+
+#[test]
+fn creating_a_managed_worktree_saves_it_as_managed() {
+    let (tmp, mut app, id, _root, _linked) = app_with_linked_checkout();
+    let _ = app.update(Message::NewWorktree(id));
+    let _ = app.update(Message::Creation(create::Message::Branch(
+        "agent-task".into(),
+    )));
+    let _ = app.update(Message::Creation(create::Message::Name(
+        "created by agent".into(),
+    )));
+    let _ = app.update(Message::Creation(create::Message::Managed(true)));
+    let confirm = app.update(Message::Creation(create::Message::Confirm));
+    assert_eq!(confirm.units(), 1, "{:?}", app.notice);
+    let created = tmp.path().join("created by agent");
+    let _ = app.update(Message::WorktreeCreated(id, Ok(created.clone())));
+    assert!(app.projects[0].is_managed(&created));
+    let (_, saved) = Store::open_path(tmp.path().join("config/projects.json")).unwrap();
+    assert_eq!(
+        saved[0].managed.get(&created),
+        Some(&agent::Settings::default())
+    );
+
+    // A worktree created as a terminal worktree is not managed.
+    let _ = app.update(Message::NewWorktree(id));
+    let _ = app.update(Message::Creation(create::Message::Branch("plain".into())));
+    let _ = app.update(Message::Creation(create::Message::Confirm));
+    let plain = tmp.path().join("plain");
+    let _ = app.update(Message::WorktreeCreated(id, Ok(plain.clone())));
+    assert!(!app.projects[0].is_managed(&plain));
+}
+
+#[test]
+fn follow_up_prompts_are_queued_until_the_running_turn_finishes() {
+    let (_tmp, mut app, _id, linked) = app_with_managed_worktree();
+    assert_eq!(
+        send(&mut app, &linked, "   ").units(),
+        0,
+        "blank prompts are not sent"
+    );
+    assert_eq!(send(&mut app, &linked, "Fix the tests").units(), 1);
+    let first = running_turn(&app, &linked).unwrap();
+    assert!(app.agents[&linked].composer.text().trim().is_empty());
+
+    // While the turn runs, more prompts wait in order.
+    assert_eq!(send(&mut app, &linked, "Then update the docs").units(), 0);
+    assert_eq!(send(&mut app, &linked, "And commit").units(), 0);
+    assert_eq!(app.agents[&linked].queue.len(), 2);
+    assert_eq!(user_prompts(&app, &linked), ["Fix the tests"]);
+
+    // Events from another (stale) turn are ignored.
+    let stale = agent::Update::Event(agent::Event::Text("old".into()));
+    let _ = app.update(Message::Agent(AgentMessage::Turn(
+        linked.clone(),
+        first + 99,
+        stale,
+    )));
+    assert_eq!(app.agents[&linked].transcript.entries.len(), 1);
+
+    let reply = agent::Update::Event(agent::Event::Text("Fixed.".into()));
+    let _ = app.update(Message::Agent(AgentMessage::Turn(
+        linked.clone(),
+        first,
+        reply,
+    )));
+    // Even a failed turn hands over to the next queued prompt.
+    let done = agent::Update::Finished(Err("Claude exited with 1".into()));
+    let next = app.update(Message::Agent(AgentMessage::Turn(
+        linked.clone(),
+        first,
+        done,
+    )));
+    assert_eq!(next.units(), 1, "the first queued prompt starts");
+    let second = running_turn(&app, &linked).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(app.agents[&linked].queue, ["And commit"]);
+    assert_eq!(
+        user_prompts(&app, &linked),
+        ["Fix the tests", "Then update the docs"]
+    );
+    assert!(
+        app.agents[&linked]
+            .transcript
+            .entries
+            .contains(&agent::Entry::Error("Claude exited with 1".into()))
+    );
+}
+
+#[test]
+fn the_harness_session_is_saved_so_follow_ups_resume_it() {
+    let (tmp, mut app, _id, linked) = app_with_managed_worktree();
+    let _ = send(&mut app, &linked, "Hello");
+    let turn = running_turn(&app, &linked).unwrap();
+    let session = agent::Update::Event(agent::Event::Session("s-42".into()));
+    let _ = app.update(Message::Agent(AgentMessage::Turn(
+        linked.clone(),
+        turn,
+        session,
+    )));
+    assert_eq!(
+        app.projects[0].managed[&linked].session.as_deref(),
+        Some("s-42")
+    );
+    let (_, saved) = Store::open_path(tmp.path().join("config/projects.json")).unwrap();
+    assert_eq!(saved[0].managed[&linked].session.as_deref(), Some("s-42"));
+}
+
+#[test]
+fn stopping_a_turn_returns_queued_prompts_to_the_editor() {
+    let (_tmp, mut app, _id, linked) = app_with_managed_worktree();
+    let _ = send(&mut app, &linked, "Long task");
+    let turn = running_turn(&app, &linked).unwrap();
+    let _ = send(&mut app, &linked, "Queued one");
+    let _ = send(&mut app, &linked, "Queued two");
+    type_prompt(&mut app, &linked, "Half typed");
+
+    let _ = app.update(Message::Agent(AgentMessage::Stop(linked.clone())));
+    let pane = &app.agents[&linked];
+    assert!(pane.run.is_none());
+    assert!(pane.queue.is_empty());
+    assert_eq!(
+        pane.composer.text().trim(),
+        "Half typed\n\nQueued one\n\nQueued two"
+    );
+    assert_eq!(
+        pane.transcript.entries.last(),
+        Some(&agent::Entry::Notice("Stopped.".into()))
+    );
+    // The stopped turn's last messages change nothing.
+    let done = agent::Update::Finished(Ok(()));
+    assert_eq!(
+        app.update(Message::Agent(AgentMessage::Turn(
+            linked.clone(),
+            turn,
+            done
+        )))
+        .units(),
+        0
+    );
+}
+
+#[test]
+fn harness_is_chosen_before_the_first_prompt_and_model_and_thinking_any_time() {
+    let (tmp, mut app, _id, linked) = app_with_managed_worktree();
+    let settings = |app: &App| app.projects[0].managed[&linked].clone();
+    let _ = app.update(Message::Agent(AgentMessage::Thinking(
+        linked.clone(),
+        agent::Level(Some("max".into())),
+    )));
+    let _ = app.update(Message::Agent(AgentMessage::Harness(
+        linked.clone(),
+        agent::Harness::Pi,
+    )));
+    // Changing harness starts from that harness's defaults.
+    assert_eq!(
+        settings(&app),
+        agent::Settings {
+            harness: agent::Harness::Pi,
+            ..Default::default()
+        }
+    );
+    let _ = app.update(Message::Agent(AgentMessage::Thinking(
+        linked.clone(),
+        agent::Level(Some("xhigh".into())),
+    )));
+    // A model without that thinking level falls back to the default level.
+    let model = agent::Model {
+        id: Some("local/tiny".into()),
+        levels: Vec::new(),
+    };
+    let _ = app.update(Message::Agent(AgentMessage::Model(linked.clone(), model)));
+    assert_eq!(settings(&app).model.as_deref(), Some("local/tiny"));
+    assert_eq!(settings(&app).thinking, None);
+
+    let _ = send(&mut app, &linked, "Go");
+    let _ = app.update(Message::Agent(AgentMessage::Harness(
+        linked.clone(),
+        agent::Harness::Codex,
+    )));
+    assert_eq!(
+        settings(&app).harness,
+        agent::Harness::Pi,
+        "fixed once started"
+    );
+    let (_, saved) = Store::open_path(tmp.path().join("config/projects.json")).unwrap();
+    assert_eq!(saved[0].managed[&linked], settings(&app));
 }

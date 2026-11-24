@@ -1,4 +1,4 @@
-use crate::git::Checkout;
+use crate::{agent, git::Checkout};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -16,6 +16,8 @@ pub struct Store {
 pub struct ProjectBookmark {
     pub checkout: Checkout,
     pub worktree_names: BTreeMap<PathBuf, String>,
+    /// Worktrees run by a coding agent instead of a terminal, and how.
+    pub managed: BTreeMap<PathBuf, agent::Settings>,
 }
 
 impl From<Checkout> for ProjectBookmark {
@@ -23,6 +25,7 @@ impl From<Checkout> for ProjectBookmark {
         Self {
             checkout,
             worktree_names: BTreeMap::new(),
+            managed: BTreeMap::new(),
         }
     }
 }
@@ -33,6 +36,16 @@ struct Bookmark {
     common_dir: StoredPath,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     worktree_names: Vec<WorktreeName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    managed: Vec<ManagedWorktree>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ManagedWorktree {
+    path: StoredPath,
+    // `flatten` stores the settings as fields of this object, like `{ path, ...settings }`.
+    #[serde(flatten)]
+    settings: agent::Settings,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -108,6 +121,11 @@ impl Store {
                     .into_iter()
                     .map(|entry| (entry.path.into(), entry.name))
                     .collect(),
+                managed: bookmark
+                    .managed
+                    .into_iter()
+                    .map(|entry| (entry.path.into(), entry.settings))
+                    .collect(),
             });
         }
         Ok(projects)
@@ -125,6 +143,14 @@ impl Store {
                     .map(|(path, name)| WorktreeName {
                         path: path.as_path().into(),
                         name,
+                    })
+                    .collect(),
+                managed: project
+                    .managed
+                    .into_iter()
+                    .map(|(path, settings)| ManagedWorktree {
+                        path: path.as_path().into(),
+                        settings,
                     })
                     .collect(),
             })
@@ -174,13 +200,24 @@ mod tests {
             common_dir: tmp.path().join(".git"),
         };
         assert!(store.load().unwrap().is_empty());
-        let project = ProjectBookmark::from(checkout);
+        let mut project = ProjectBookmark::from(checkout);
         store.save([project.clone()]).unwrap();
-        assert!(
-            !fs::read_to_string(&store.path)
-                .unwrap()
-                .contains("worktree_names")
+        let saved = fs::read_to_string(&store.path).unwrap();
+        assert!(!saved.contains("worktree_names") && !saved.contains("managed"));
+        assert_eq!(store.load().unwrap(), [project.clone()]);
+
+        // A managed worktree keeps its harness, model, thinking and session.
+        project.managed.insert(
+            tmp.path()
+                .join(OsString::from_vec(b"agent \xff tree".to_vec())),
+            agent::Settings {
+                harness: agent::Harness::Codex,
+                model: Some("gpt-x".into()),
+                thinking: None,
+                session: Some("th-1".into()),
+            },
         );
+        store.save([project.clone()]).unwrap();
         assert_eq!(store.load().unwrap(), [project]);
         store.save([]).unwrap();
         assert!(store.load().unwrap().is_empty());

@@ -68,6 +68,10 @@ pub enum Tool {
     Git,
     Tmux,
     Gh,
+    /// Coding-agent harnesses for managed worktrees (`agent`).
+    Claude,
+    Codex,
+    Pi,
 }
 
 impl Tool {
@@ -76,6 +80,9 @@ impl Tool {
             Self::Git => "git",
             Self::Tmux => "tmux",
             Self::Gh => "gh",
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Pi => "pi",
         }
     }
 
@@ -83,7 +90,7 @@ impl Tool {
     fn override_var(self) -> Option<&'static str> {
         match self {
             Self::Tmux => Some("WORKTREE_BROWSER_TMUX"),
-            Self::Git | Self::Gh => None,
+            _ => None,
         }
     }
 
@@ -92,6 +99,19 @@ impl Tool {
             Self::Git => "Install the Xcode Command Line Tools or `brew install git`.",
             Self::Tmux => "Install it with `brew install tmux`.",
             Self::Gh => "Install it with `brew install gh`.",
+            Self::Claude => "Install Claude Code from https://claude.com/claude-code.",
+            Self::Codex => "Install it with `npm install -g @openai/codex`.",
+            Self::Pi => "Install Pi and run it once in a terminal to sign in.",
+        }
+    }
+
+    /// Folders under the home directory that installers use, searched after
+    /// `PATH` (a macOS app opened from Finder has none of them on `PATH`).
+    fn home_dirs(self) -> &'static [&'static str] {
+        match self {
+            Self::Claude | Self::Codex => &[".local/bin", ".claude/local", ".npm-global/bin"],
+            Self::Pi => &[".pi/agent/bin", ".local/bin", ".npm-global/bin"],
+            Self::Git | Self::Tmux | Self::Gh => &[],
         }
     }
 }
@@ -99,16 +119,19 @@ impl Tool {
 /// Finds `tool` using the real environment. See [`find_in`].
 pub fn find(tool: Tool) -> Result<PathBuf, String> {
     let overridden = tool.override_var().and_then(std::env::var_os);
-    find_in(tool, overridden, std::env::var_os("PATH"))
+    let home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
+    find_in(tool, overridden, std::env::var_os("PATH"), home)
 }
 
 /// Finds `tool`: the override path if one is set (it must be an absolute path to an
-/// executable), otherwise the first executable on `path_var` or in [`FALLBACK_DIRS`].
+/// executable), otherwise the first executable on `path_var`, in the tool's folders under
+/// `home`, or in [`FALLBACK_DIRS`].
 /// The environment is passed in so tests don't have to change the process environment.
 fn find_in(
     tool: Tool,
     overridden: Option<OsString>,
     path_var: Option<OsString>,
+    home: Option<PathBuf>,
 ) -> Result<PathBuf, String> {
     if let (Some(var), Some(path)) = (tool.override_var(), overridden) {
         let path = PathBuf::from(path);
@@ -122,7 +145,11 @@ fn find_in(
             ))
         };
     }
+    let home_dirs = home
+        .into_iter()
+        .flat_map(|home| tool.home_dirs().iter().map(move |dir| home.join(dir)));
     std::env::split_paths(&path_var.unwrap_or_default())
+        .chain(home_dirs)
         .chain(FALLBACK_DIRS.map(PathBuf::from))
         .map(|dir| dir.join(tool.name()))
         .find(|path| is_executable(path))
@@ -362,16 +389,42 @@ pub(crate) mod tests {
         std::fs::create_dir(&bin).unwrap();
         let gh = script(&bin, "gh", "exit 0");
         let path_var = std::env::join_paths([Path::new("relative"), &bin]).unwrap();
-        assert_eq!(find_in(Tool::Gh, None, Some(path_var.clone())), Ok(gh));
+        assert_eq!(
+            find_in(Tool::Gh, None, Some(path_var.clone()), None),
+            Ok(gh)
+        );
         // A non-executable file on PATH is skipped.
         std::fs::write(bin.join("git"), "").unwrap();
-        let git = find_in(Tool::Git, None, Some(path_var)).unwrap();
+        let git = find_in(Tool::Git, None, Some(path_var), None).unwrap();
         assert!(
             FALLBACK_DIRS.iter().any(|dir| git.starts_with(dir)),
             "{git:?}"
         );
         // Git has no override variable, so a stray value is ignored.
-        assert!(find_in(Tool::Git, Some(OsStr::from_bytes(b"/nope").into()), None).is_ok());
+        assert!(
+            find_in(
+                Tool::Git,
+                Some(OsStr::from_bytes(b"/nope").into()),
+                None,
+                None
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn agent_harnesses_are_found_in_their_installers_home_folders() {
+        let home = tempfile::tempdir().unwrap();
+        let bin = home.path().join(".pi/agent/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let pi = script(&bin, "pi", "exit 0");
+        assert_eq!(
+            find_in(Tool::Pi, None, None, Some(home.path().to_path_buf())),
+            Ok(pi)
+        );
+        // Other tools don't look there.
+        let error = find_in(Tool::Claude, None, None, Some(home.path().to_path_buf()));
+        assert!(error.is_err_and(|error| error.contains("claude not found")));
     }
 
     #[test]
@@ -379,13 +432,13 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tmux = script(dir.path(), "my tmux", "exit 0");
         assert_eq!(
-            find_in(Tool::Tmux, Some(tmux.clone().into()), None),
+            find_in(Tool::Tmux, Some(tmux.clone().into()), None, None),
             Ok(tmux)
         );
         let missing = dir.path().join("not-installed/tmux");
-        let error = find_in(Tool::Tmux, Some(missing.into()), None).unwrap_err();
+        let error = find_in(Tool::Tmux, Some(missing.into()), None, None).unwrap_err();
         assert!(error.contains("WORKTREE_BROWSER_TMUX"), "{error}");
         assert!(error.contains("not-installed/tmux"), "{error}");
-        assert!(find_in(Tool::Tmux, Some("tmux".into()), None).is_err());
+        assert!(find_in(Tool::Tmux, Some("tmux".into()), None, None).is_err());
     }
 }

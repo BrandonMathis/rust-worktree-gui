@@ -15,6 +15,7 @@ These documents define what Worktree Browser must do. They were derived from the
 | [FRD-07](FRD-07-interface.md) | Look, layout and sidebar behavior | `UI-*` |
 | [FRD-08](FRD-08-constraints.md) | Constraints and non-functional requirements | `NFR-*` |
 | [FRD-09](FRD-09-settings.md) | Settings and theme | `SET-*` |
+| [FRD-10](FRD-10-managed-worktrees.md) | Managed worktrees (coding-agent harness) | `AGT-*` |
 
 ## Conventions
 
