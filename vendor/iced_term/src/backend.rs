@@ -21,6 +21,7 @@ use std::borrow::Cow;
 use std::cmp::min;
 use std::io::Result;
 use std::ops::{Index, RangeInclusive};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -151,7 +152,7 @@ pub struct Backend {
 impl Backend {
     pub fn new(
         id: u64,
-        pty_event_proxy_sender: mpsc::Sender<Event>,
+        event_proxy: EventProxy,
         settings: BackendSettings,
     ) -> Result<Self> {
         let pty_config = tty::Options {
@@ -166,8 +167,6 @@ impl Backend {
         let pty = tty::new(&pty_config, terminal_size.into(), id)?;
         #[cfg(unix)]
         let child_pid = pty.child().id();
-
-        let event_proxy = EventProxy(pty_event_proxy_sender);
 
         let term = Term::new(config, &terminal_size, event_proxy.clone());
         let cursor = term.renderable_content().cursor;
@@ -203,24 +202,28 @@ impl Backend {
     }
 
     pub fn handle(&mut self, cmd: Command) -> Action {
-        let mut action = Action::default();
+        // Patch: alacritty events don't touch the grid, so handle them before
+        // taking the terminal lock, which the PTY thread holds while it parses.
+        let cmd = match cmd {
+            Command::ProcessAlacrittyEvent(event) => {
+                return match event {
+                    Event::Exit => Action::Shutdown,
+                    Event::Title(title) => Action::ChangeTitle(title),
+                    Event::PtyWrite(pty) => {
+                        self.notifier.notify(pty.into_bytes());
+                        Action::default()
+                    },
+                    _ => Action::default(),
+                };
+            },
+            cmd => cmd,
+        };
+
         let term = self.term.clone();
         let mut term = term.lock();
         match cmd {
-            Command::ProcessAlacrittyEvent(event) => {
-                match event {
-                    Event::Exit => {
-                        action = Action::Shutdown;
-                    },
-                    Event::Title(title) => {
-                        action = Action::ChangeTitle(title);
-                    },
-                    Event::PtyWrite(pty) => {
-                        self.notifier.notify(pty.into_bytes())
-                    },
-                    _ => {},
-                };
-            },
+            // Handled above, before locking.
+            Command::ProcessAlacrittyEvent(_) => {},
             Command::Write(input) => {
                 self.write(input);
                 term.scroll_display(Scroll::Bottom);
@@ -256,7 +259,7 @@ impl Backend {
             },
         };
 
-        action
+        Action::default()
     }
 
     fn process_link_action(
@@ -639,6 +642,55 @@ impl Default for RenderableContent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn pty_events_never_block_when_the_ui_is_not_draining() {
+        // Reproduces the hang: the PTY thread sends events while holding the
+        // terminal lock, and nothing drains the queue (the UI thread is stuck
+        // in a macOS resize loop). Upstream's bounded channel blocked here
+        // after 100 events, holding the lock forever.
+        let (proxy, _receiver) = event_channel();
+        let lock = Arc::new(FairMutex::new(()));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let pty_lock = lock.clone();
+        std::thread::spawn(move || {
+            let _held = pty_lock.lock();
+            for _ in 0..10_000 {
+                proxy.send_event(Event::PtyWrite("\x1b[0n".into()));
+                proxy.send_event(Event::Wakeup);
+            }
+            let _ = done_tx.send(());
+        });
+
+        assert!(
+            done_rx.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "PTY thread blocked sending events"
+        );
+        // The UI thread can take the terminal lock again.
+        drop(lock.lock());
+    }
+
+    #[test]
+    fn queued_redraws_collapse_to_one_until_the_ui_takes_it() {
+        let (proxy, mut receiver) = event_channel();
+        proxy.send_event(Event::Wakeup);
+        proxy.send_event(Event::Bell);
+        proxy.send_event(Event::Wakeup);
+        proxy.send_event(Event::Title("pi".into()));
+
+        assert!(matches!(receiver.try_recv(), Some(Event::Wakeup)));
+        assert!(matches!(receiver.try_recv(), Some(Event::Bell)));
+        assert!(
+            matches!(receiver.try_recv(), Some(Event::Title(ref t)) if t == "pi")
+        );
+        assert!(receiver.try_recv().is_none());
+
+        // Output after the redraw was taken needs (and gets) a new one.
+        proxy.send_event(Event::Wakeup);
+        assert!(matches!(receiver.try_recv(), Some(Event::Wakeup)));
+        assert!(receiver.try_recv().is_none());
+    }
 
     #[test]
     fn wheel_prioritizes_tmux_mouse_mode_over_alternate_screen() {
@@ -691,11 +743,76 @@ impl Drop for Backend {
     }
 }
 
+/// Patch: creates the queue that carries alacritty events from the PTY thread
+/// to the terminal subscription.
+///
+/// Upstream used a bounded channel with `blocking_send`. alacritty calls
+/// `send_event` on its PTY thread *while holding the terminal lock*, and the
+/// queue drains only as fast as the UI thread handles messages. When the UI
+/// thread stalled (macOS runs window resize and zoom in a modal loop) under
+/// heavy output, the queue filled, the PTY thread blocked holding the lock,
+/// and the UI thread then waited on that lock forever. So sending must never
+/// block: the queue is unbounded, and redraw requests (`Wakeup`) are collapsed
+/// to at most one in flight so output alone can't grow it.
+pub(crate) fn event_channel() -> (EventProxy, EventReceiver) {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let wakeup_pending = Arc::new(AtomicBool::new(false));
+    (
+        EventProxy {
+            sender,
+            wakeup_pending: wakeup_pending.clone(),
+        },
+        EventReceiver {
+            receiver,
+            wakeup_pending,
+        },
+    )
+}
+
 #[derive(Clone)]
-pub struct EventProxy(mpsc::Sender<Event>);
+pub struct EventProxy {
+    sender: mpsc::UnboundedSender<Event>,
+    /// True while a `Wakeup` sits in the queue, not yet taken.
+    wakeup_pending: Arc<AtomicBool>,
+}
 
 impl EventListener for EventProxy {
+    /// Runs on the PTY thread with the terminal locked, so it must not block.
     fn send_event(&self, event: Event) {
-        let _ = self.0.blocking_send(event);
+        if matches!(event, Event::Wakeup)
+            && self.wakeup_pending.swap(true, Ordering::AcqRel)
+        {
+            // A redraw is already queued. Its grid sync needs the lock this
+            // thread holds, so it will include this output too.
+            return;
+        }
+        // Fails only once the terminal (the receiver) is gone.
+        let _ = self.sender.send(event);
+    }
+}
+
+/// The subscription's end of [`event_channel`].
+pub(crate) struct EventReceiver {
+    receiver: mpsc::UnboundedReceiver<Event>,
+    wakeup_pending: Arc<AtomicBool>,
+}
+
+impl EventReceiver {
+    pub(crate) async fn recv(&mut self) -> Option<Event> {
+        let event = self.receiver.recv().await;
+        self.taken(event)
+    }
+
+    pub(crate) fn try_recv(&mut self) -> Option<Event> {
+        let event = self.receiver.try_recv().ok();
+        self.taken(event)
+    }
+
+    /// Once the queued `Wakeup` is taken, later output needs a new one.
+    fn taken(&self, event: Option<Event>) -> Option<Event> {
+        if matches!(event, Some(Event::Wakeup)) {
+            self.wakeup_pending.store(false, Ordering::Release);
+        }
+        event
     }
 }
