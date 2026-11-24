@@ -31,7 +31,7 @@ Patch releases still arrive in two ways: through a security update, or as part o
 | `cargo deny check` (advisories, licenses, bans, sources) | `ci.yml` | Every PR and push to `main` | Vulnerable, unmaintained or yanked crates; disallowed licenses; crates from unknown registries or git repos |
 | `cargo deny check advisories` | `security.yml` | Daily | Advisories published after a dependency was merged. A failure opens an issue labelled `security-advisory`. |
 | Dependency review | `security.yml` | Every PR | A PR that adds a dependency with a known vulnerability (fails at any severity), or one with a low OpenSSF Scorecard rating (warning) |
-| CodeQL (`security-extended`) | `security.yml` | Every PR, push to `main`, daily | Security bugs in our Rust code, such as path or command injection |
+| CodeQL (`security-extended`) | `codeql.yml` | PRs that change Rust code or Cargo files, push to `main`, daily | Security bugs in our Rust code, such as path or command injection |
 | zizmor | `security.yml` | Every PR and push to `main` | Workflow injection, leaked credentials, over-broad permissions, unpinned actions |
 | Dependency health report | `dependency-health.yml` | Mondays | Direct dependencies that are majorly out of date or out of support, and an aged-out Rust toolchain (see below) |
 | Clippy with `-D warnings` and panic lints | `ci.yml` | Every PR | Panics on I/O or subprocess results (see `Cargo.toml` `[lints]`) |
