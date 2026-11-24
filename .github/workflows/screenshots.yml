@@ -5,13 +5,15 @@
 # dependency update) starts no macOS runner at all. The macOS job builds the app
 # with `--features capture` and runs script/capture/capture.rb for those states
 # (fixture repos plus a private tmux server with vim and shell splits); the PNGs
-# are linked from one PR comment that is updated on each push.
+# are shown inline in one PR comment that is updated on each push.
 #
-# Nothing is committed to the repository. The PNGs are workflow artifacts, which
-# expire on their own: one zip of everything from the macOS job, then each PNG
-# again as its own unzipped artifact so the comment can link straight to an
-# image. GitHub has no API for uploading comment images, so the comment links
-# to the screenshots rather than showing them inline.
+# Nothing is committed to the repository. A comment can show an image only from
+# a URL anyone can fetch: workflow artifacts need a sign-in, and GitHub has no
+# API for uploading comment images. So the comment job uploads the PNGs as
+# assets of one `pr-screenshots` prerelease, named after the PR and commit
+# (`pr36-a1b2c3d-01-workspace.png`), and then deletes the PR's older ones,
+# which the comment no longer shows. The macOS job's zip of PNGs and logs stays
+# a workflow artifact.
 name: Screenshots
 
 on:
@@ -48,7 +50,6 @@ jobs:
       contents: read
     outputs:
       states: ${{ steps.select.outputs.states }}
-      matrix: ${{ steps.select.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,8 +70,6 @@ jobs:
             states=$(ruby script/capture/select.rb --all --summary "$GITHUB_STEP_SUMMARY")
           fi
           echo "states=$states" >> "$GITHUB_OUTPUT"
-          # The same names as a JSON array, for the `images` job's matrix.
-          echo "matrix=$(ruby -rjson -e 'puts ARGV[0].split(",").to_json' "$states")" >> "$GITHUB_OUTPUT"
 
   capture:
     name: Capture
@@ -104,49 +103,26 @@ jobs:
           path: screenshots/
           if-no-files-found: ignore
 
-  images:
-    name: Image (${{ matrix.state }})
-    needs: [plan, capture]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # Artifacts of the same run are read and written with the runner's own
-    # token, so this job needs no permissions.
-    permissions: {}
-    strategy:
-      # `archive: false` uploads one file per step, so each state gets a job.
-      matrix:
-        state: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: screenshots
-          path: screenshots
-      # Unzipped, so the link in the comment leads to the PNG itself. The
-      # artifact is named after the file (`01-workspace.png`).
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          path: screenshots/${{ matrix.state }}.png
-          archive: false
-          if-no-files-found: error
-
   publish:
     name: Comment
-    needs: images
-    # Fork PRs get a read-only token, so they only get the artifacts.
+    needs: capture
+    # Fork PRs get a read-only token, so they only get the artifact.
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
-      actions: read # list this run's artifacts
+      contents: write # create the screenshots release and upload its assets
       pull-requests: write # create or update the comment
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RELEASE: pr-screenshots
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -155,13 +131,33 @@ jobs:
         with:
           name: screenshots
           path: screenshots
+      - name: Upload the screenshots
+        run: |
+          set -euo pipefail
+          # Another PR's job may create the release at the same moment, so a
+          # failed create is fine as long as the release exists afterwards.
+          if ! gh release view "$RELEASE" > /dev/null 2>&1; then
+            gh release create "$RELEASE" --target "$DEFAULT_BRANCH" --prerelease --latest=false \
+              --title "PR screenshots" \
+              --notes "Images for pull request screenshot comments, uploaded by .github/workflows/screenshots.yml. Not a release of the app." ||
+              gh release view "$RELEASE" > /dev/null
+          fi
+          # Named after the PR and commit: GitHub caches comment images by
+          # URL, so each push needs new names to show its own screenshots.
+          prefix="pr${PR}-${HEAD_SHA:0:7}-"
+          mkdir upload
+          for png in screenshots/*.png; do
+            [ -e "$png" ] || continue
+            cp "$png" "upload/${prefix}$(basename "$png")"
+          done
+          if compgen -G 'upload/*.png' > /dev/null; then
+            gh release upload "$RELEASE" upload/*.png --clobber
+          fi
       - name: Create or update the PR comment
         run: |
           set -euo pipefail
-          # One "name<TAB>id" line per artifact of this run.
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
-            --jq '.artifacts[] | [.name, .id] | @tsv' > artifacts.tsv
-          ruby script/capture/comment.rb screenshots artifacts.tsv "$HEAD_SHA" "$RUN_URL" > comment.md
+          url_prefix="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE}/pr${PR}-${HEAD_SHA:0:7}-"
+          ruby script/capture/comment.rb screenshots "$url_prefix" "$HEAD_SHA" "$RUN_URL" > comment.md
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
           marker='<!-- worktree-browser-screenshots -->'
           ids=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/$PR/comments" \
@@ -172,3 +168,16 @@ jobs:
           else
             gh pr comment "$PR" --body-file comment.md
           fi
+      - name: Delete this PR's older screenshots
+        run: |
+          set -euo pipefail
+          # The comment now shows only this commit's images, so earlier
+          # pushes' images for the same PR are no longer used.
+          current="pr${PR}-${HEAD_SHA:0:7}-"
+          gh release view "$RELEASE" --json assets --jq '.assets[].name' |
+            while IFS= read -r name; do
+              case "$name" in
+                "$current"*) ;;
+                "pr${PR}-"*) gh release delete-asset "$RELEASE" "$name" --yes ;;
+              esac
+            done
