@@ -5,7 +5,7 @@
 //! They live in the `app` module because `App`'s fields are private to it.
 
 use super::terminal_pane::ConsoleState;
-use super::{App, MenuAction, Message};
+use super::{App, Message};
 use crate::git::{Checkout, Worktree};
 use iced::Task;
 use iced::futures::StreamExt;
@@ -62,17 +62,5 @@ impl App {
             id,
             BackendCommand::Write(bytes),
         )))
-    }
-
-    /// Opens the selected worktree's Rename field, as its ⋮ menu does.
-    pub(crate) fn perf_open_rename(&mut self) -> Task<Message> {
-        match self.selection.clone() {
-            Some(target) => self.update(Message::MenuAction(target, MenuAction::RenameWorktree)),
-            None => Task::none(),
-        }
-    }
-
-    pub(crate) fn perf_clear_rename(&mut self) -> Task<Message> {
-        self.update(Message::EditWorktreeName(String::new()))
     }
 }

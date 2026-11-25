@@ -6,7 +6,7 @@
 #   `cargo deny check` in ci.yml.)
 # - Dependency review: blocks a PR that adds a dependency with a known
 #   vulnerability, and warns on low OpenSSF Scorecard ratings.
-# - CodeQL: static analysis of the Rust code for security bugs.
+# - CodeQL runs in codeql.yml, so PRs that change no Rust code can skip it.
 # - zizmor: audits these workflow files for injection, credential leaks and
 #   unpinned actions.
 name: Security
@@ -72,26 +72,6 @@ jobs:
           fail-on-severity: low
           show-openssf-scorecard: true
           warn-on-openssf-scorecard-level: 3
-
-  codeql:
-    name: CodeQL
-    # Analyzes on macOS, the only platform the app builds for.
-    runs-on: macos-latest
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
-        with:
-          languages: rust
-          build-mode: none
-          queries: security-extended
-      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
-        with:
-          category: /language:rust
 
   zizmor:
     name: Workflow audit

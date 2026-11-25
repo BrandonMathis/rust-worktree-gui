@@ -356,7 +356,7 @@ module Latency
     # tiny-skia draws on the CPU, ~10× slower at text: measure at 1× scale,
     # in fewer rounds of fewer keystrokes, so the check still takes minutes.
     probe = measure(head_bin, File.join(out, "probe.json"),
-                    %w[--only rename_field_typing --samples 1 --warmup 0])
+                    %w[--only type_character --samples 1 --warmup 0])
     args = ["--samples", options[:samples].to_s, "--warmup", options[:warmup].to_s,
             "--renderer", probe["renderer"]]
     if probe["renderer"] == "tiny-skia"
