@@ -103,7 +103,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 - **tmux sessions** live on the `-L worktree-browser` socket and are named `wt-` plus 10 hex digits of SHA-256(common dir, canonical worktree path). Changing the naming scheme orphans users' running sessions, so it needs a migration (see `SessionNames::migrate`).
 - **Only open HTTPS URLs** with the OS opener (`actions::open_https` for links in agent replies).
 - **Agents go through the bridge.** Talk to a harness only through its SDK in `agent-bridge/`, never by scraping a terminal. Keep the worktree path out of JSON (it is the bridge's working directory), guard bridge events with the session id, and never install the SDKs without the user asking.
-- **UI:** dark Dracula theme by default, 3px rounded corners, compact. Don't add padding to the terminal pane, and don't let sidebar labels wrap. Check visual changes with a macOS screenshot (`screencapture`) at the default (1120×720) and minimum (820×440) window sizes. Colors come from the `Palette` passed into each view and style (`style::panel(p, Panel::Glass)`, `p.muted()`); never hard-code a color in a view.
+- **UI:** dark Dracula theme by default, 3px rounded corners, compact. Keep the terminal pane's padding to its 3px inset (UI-06), and don't let sidebar labels wrap. Check visual changes with a macOS screenshot (`screencapture`) at the default (1120×720) and minimum (820×440) window sizes. Colors come from the `Palette` passed into each view and style (`style::panel(p, Panel::Glass)`, `p.muted()`); never hard-code a color in a view.
 - Errors are user-facing `String`s shown in the notice bar. Never `unwrap` or `panic` on I/O or subprocess results outside tests.
 - Keep `pub` minimal. This is a single binary crate.
 
