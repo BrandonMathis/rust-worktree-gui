@@ -170,14 +170,20 @@ impl App {
     fn request_project_removal(&mut self, id: ProjectId, name: String) -> Task<Message> {
         let action = Confirmation::RemoveProject(id);
         self.pending_confirmation = Some(action);
+        let detail = if self.project_agents_working(id) {
+            format!(
+                "Remove “{name}” from Worktree Browser? Its working agents will be stopped. Repository files, worktrees, and tmux sessions will be left unchanged."
+            )
+        } else {
+            format!(
+                "Remove “{name}” from Worktree Browser? Repository files, worktrees, and tmux sessions will be left unchanged."
+            )
+        };
         window::latest()
             .then(move |id| match id {
-                Some(id) => confirmation::show(
-                    id,
-                    "Remove Project?",
-                    format!("Remove “{name}” from Worktree Browser? Repository files, worktrees, and tmux sessions will be left unchanged."),
-                    "Remove Project",
-                ),
+                Some(id) => {
+                    confirmation::show(id, "Remove Project?", detail.clone(), "Remove Project")
+                }
                 None => Task::done(false),
             })
             .map(move |confirmed| Message::ConfirmationAnswered(action, confirmed))

@@ -216,16 +216,25 @@ const codex = {
     return {
       async prompt(text) {
         abort = new AbortController();
+        // A prompt ends in exactly one `turn_end`: the app sends the next
+        // queued follow-up on each one.
         let ended = false;
+        let lastError = null;
         try {
           const { events } = await thread.runStreamed(text, { signal: abort.signal });
           for await (const event of events) {
             for (const normalized of codexEvents(event)) {
-              ended ||= normalized.type === "turn_end";
+              if (normalized.type === "turn_end") {
+                if (ended) continue;
+                ended = true;
+              }
+              if (event.type === "error") lastError = event.message;
               emit(normalized);
             }
           }
-          if (!ended) emit({ type: "turn_end", status: "done" });
+          if (!ended) {
+            emit(lastError ? { type: "turn_end", status: "failed", error: lastError } : { type: "turn_end", status: "done" });
+          }
         } catch (error) {
           if (ended) return;
           emit(

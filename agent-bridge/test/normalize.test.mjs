@@ -152,8 +152,10 @@ test("Codex: turns end as done or failed", () => {
   assert.deepEqual(codexEvents({ type: "turn.failed", error: { message: "quota" } }), [
     { type: "turn_end", status: "failed", error: "quota" },
   ]);
-  assert.deepEqual(codexEvents({ type: "error", message: "stream closed" }), [
-    { type: "turn_end", status: "failed", error: "stream closed" },
+  // An error is only a note: a retry keeps the turn going, and a fatal one is
+  // followed by `turn.failed`.
+  assert.deepEqual(codexEvents({ type: "error", message: "Reconnecting… 1/5" }), [
+    { type: "notice", text: "Reconnecting… 1/5" },
   ]);
   assert.deepEqual(codexEvents({ type: "thread.started", thread_id: "t" }), []);
 });

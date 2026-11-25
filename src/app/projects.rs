@@ -352,6 +352,8 @@ impl App {
                 .filter(|p| p.id != id)
                 .map(Project::bookmark),
         )?;
+        // Before the project goes: its worktrees decide which agents to stop.
+        self.stop_project_agents(id);
         self.projects.retain(|p| p.id != id);
         if self.unavailable_list == Some(id) {
             self.unavailable_list = None;

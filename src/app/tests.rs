@@ -1615,6 +1615,45 @@ fn follow_ups_wait_for_the_running_turn_and_go_in_one_at_a_time() {
 }
 
 #[test]
+fn a_turn_that_ends_twice_releases_only_one_follow_up() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(true);
+    for follow_up in ["second", "third"] {
+        let _ = submit(&mut app, follow_up);
+    }
+    let id = app.managed.sessions[&linked].id();
+    let error = |message: &str| {
+        let event = Event::Error {
+            message: message.into(),
+        };
+        managed(ManagedMessage::Bridge(
+            linked.clone(),
+            id,
+            Update::Event(event),
+        ))
+    };
+
+    // The harness reports an error, then the failed turn it ended. Only the
+    // first end counts; "third" waits for the turn "second" starts.
+    let _ = app.update(error("stream closed"));
+    assert_eq!(sent(&mut commands), [prompt("second")]);
+    turn_end(&mut app, &linked, TurnStatus::Failed);
+    assert_eq!(sent(&mut commands), [prompt("third")]);
+    turn_end(&mut app, &linked, TurnStatus::Done);
+    assert!(!app.managed.sessions[&linked].working());
+
+    // With nothing running, a stray end or error starts nothing.
+    turn_end(&mut app, &linked, TurnStatus::Failed);
+    let _ = app.update(error("interrupt failed"));
+    assert!(sent(&mut commands).is_empty());
+    assert!(!app.managed.sessions[&linked].working());
+    assert!(matches!(
+        app.managed.sessions[&linked].transcript.items().last(),
+        Some(Item::Notice(text)) if text == "interrupt failed"
+    ));
+}
+
+#[test]
 fn stop_interrupts_only_a_running_turn() {
     let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
     let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
@@ -1788,6 +1827,27 @@ fn an_unavailable_managed_worktree_starts_no_agent() {
     assert!(app.managed.sessions.is_empty());
     assert!(matches!(app.managed.bridge, BridgeState::Unknown));
     assert_eq!(submit(&mut app, "hello").units(), 0);
+}
+
+#[test]
+fn removing_a_project_stops_the_agents_in_its_worktrees() {
+    let (_tmp, mut app, id, _root, linked) = app_with_managed_worktree();
+    let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(true);
+    assert!(app.project_agents_working(id));
+
+    app.pending_confirmation = Some(Confirmation::RemoveProject(id));
+    let _ = app.update(Message::ConfirmationAnswered(
+        Confirmation::RemoveProject(id),
+        true,
+    ));
+    assert!(app.projects.is_empty());
+    // Nothing could show or stop the agent once its row is gone.
+    assert!(!app.managed.sessions.contains_key(&linked));
+    assert!(!app.agents_working());
+    assert!(matches!(
+        commands.try_recv(),
+        Err(iced::futures::channel::mpsc::TryRecvError::Closed)
+    ));
 }
 
 #[test]
