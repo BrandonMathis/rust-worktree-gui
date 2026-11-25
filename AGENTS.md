@@ -8,8 +8,8 @@ The project is also a learning exercise: the owner is a React developer learning
 
 - **Start from the latest `main`.** Unless the request names another branch, run `git fetch origin main` and branch from it (`git switch -c <branch> origin/main`) before changing anything. If the checkout has uncommitted changes you didn't make, leave them alone and ask.
 - **Other agents may be editing this repository at the same time.** Check `git status` and file modification times before broad edits, don't revert changes you didn't make, and avoid large refactors of a file someone else is changing.
-- **Finish with a pull request.** When a task is complete and format, clippy and tests pass, commit, push and open a PR with `gh pr create`, without asking first. Skip it only when there are open questions or something blocks it (you need a decision or more input from the owner, or the checks can't be made to pass), and say why. Questions, research, reviews and releases don't get one.
-- **End with the PR link.** When you finish a task that has an open PR, or for which you created one, put a link to the PR at the end of your response so the user can click straight through to it.
+- **Open a PR when the task is done.** Once checks pass, commit, push and run `gh pr create` without asking. Skip the PR only if questions are still open or something blocks it, and say what. Questions, research, reviews and releases don't get one.
+- **End with the PR link.** If the task has a PR, finish your final response with its URL.
 - Write PR descriptions with the `pr-description` skill.
 - A "release" means the `new-release` skill; it commits straight to `main`.
 - Project skills live in `.agents/skills/` and are committed. `.claude/skills` is a symlink to it, and `CLAUDE.md` is a symlink to this file.
