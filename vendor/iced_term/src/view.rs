@@ -39,18 +39,28 @@ impl<'a> TerminalView<'a> {
 
     /// Show an unpadded terminal at the window's physical-to-logical scale.
     pub fn show_at_scale(term: &'a Terminal, scale: f32) -> Element<'a, Event> {
-        Self::show_rounded(term, scale, Radius::default())
+        Self::show_rounded(term, scale, Radius::default(), 0.0)
     }
 
-    /// Patch: like `show_at_scale`, with rounded corners. Upstream always
-    /// painted a square background, which covered the rounded corners of
-    /// the pane it is embedded in.
+    /// Patch: like `show_at_scale`, with rounded corners and an inset.
+    /// Upstream always painted a square background, which covered the
+    /// rounded corners of the pane it is embedded in, and had no way to keep
+    /// glyphs off the pane's edge. The inset (`padding`, in logical pixels)
+    /// is painted in the terminal's background color, and the grid's own
+    /// corners shrink by the same amount so the two curves stay parallel.
     pub fn show_rounded(
         term: &'a Terminal,
         scale: f32,
         corner_radius: impl Into<Radius>,
+        padding: f32,
     ) -> Element<'a, Event> {
-        Self::show_with_options(term, None, scale, corner_radius.into())
+        Self::show_with_options(
+            term,
+            None,
+            scale,
+            corner_radius.into(),
+            padding,
+        )
     }
 
     /// Optionally distribute leftover backing pixels evenly around the grid.
@@ -63,6 +73,7 @@ impl<'a> TerminalView<'a> {
             scale,
             scale.unwrap_or(1.0),
             Radius::default(),
+            0.0,
         )
     }
 
@@ -71,13 +82,16 @@ impl<'a> TerminalView<'a> {
         padding: Option<f32>,
         scale: f32,
         corner_radius: Radius,
+        inset: f32,
     ) -> Element<'a, Event> {
+        let inset = inset.max(0.0);
         container(Self {
             term,
             dynamic_padding_scale: padding,
             backing_scale: scale.max(1.0),
-            corner_radius,
+            corner_radius: inset_radius(corner_radius, inset),
         })
+        .padding(inset)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(move |_| {
@@ -517,6 +531,19 @@ fn center_grid(span: f32, cell: f32, scale: f32) -> (f32, f32) {
     let occupied = (span / cell).floor() * cell;
     let before = ((span - occupied) * scale / 2.0).floor() / scale;
     (occupied, before)
+}
+
+/// Patch: the radius of a rounded rectangle inset by `inset` on every side,
+/// so its corners run parallel to the outer ones (a 3pt corner inside a 3pt
+/// inset becomes square).
+fn inset_radius(radius: Radius, inset: f32) -> Radius {
+    let shrink = |r: f32| (r - inset).max(0.0);
+    Radius {
+        top_left: shrink(radius.top_left),
+        top_right: shrink(radius.top_right),
+        bottom_right: shrink(radius.bottom_right),
+        bottom_left: shrink(radius.bottom_left),
+    }
 }
 
 impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
@@ -1191,6 +1218,15 @@ mod tests {
         assert_eq!(super::cell_shaping('é'), Shaping::Advanced);
         assert_eq!(super::cell_shaping('\u{e0b0}'), Shaping::Advanced);
         assert_eq!(super::cell_shaping('漢'), Shaping::Advanced);
+    }
+
+    #[test]
+    fn inset_corners_stay_parallel_to_the_pane_corners() {
+        let pane = super::Radius::default().bottom_right(16.0).top_left(3.0);
+        let grid = super::inset_radius(pane, 3.0);
+        assert_eq!(grid.bottom_right, 13.0);
+        assert_eq!(grid.top_left, 0.0);
+        assert_eq!(grid.top_right, 0.0);
     }
 
     /// A 100×100 widget whose bottom-right corner has a 12pt radius.

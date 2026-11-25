@@ -43,7 +43,8 @@ Ruby helper scripts have tests next to them (`scripts/test/`, `script/capture/te
 ## Requirements are the spec
 
 - `docs/frd/` is the only requirements document. Each requirement has an ID (such as `TRM-04`) and names the test that verifies it. Don't create a separate summary such as `docs/REQUIREMENTS.md`.
-- When you add or change behavior, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
+- When you add or change core functionality, update the matching FRD row (or add a new ID) and add or adjust a test in the same change. Name tests as behavior sentences, e.g. `unavailable_worktrees_never_start_a_terminal`, and cite them in the FRD.
+- The FRD covers core functionality only: what the app does for the user, such as features, workflows, what it reads or changes, and its safety rules. Don't edit it for visual polish or small tweaks (padding, spacing, colors, sizes, icons, wording), even when an existing row mentions the detail. Those changes ship with the code alone.
 - Mark anything a unit test can't observe (rendering, macOS integration) as **Manual**, with the check to perform.
 - Don't keep requirement counts or totals in `docs/frd/README.md`; every feature would edit the same lines and conflict.
 - `PLAN.md` is historical. Don't treat it as current.
