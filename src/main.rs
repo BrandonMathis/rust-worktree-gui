@@ -18,6 +18,7 @@ mod pull_request;
 mod quit;
 mod row_menu;
 mod runner;
+mod session_cleanup;
 mod settings;
 mod style;
 mod terminal;

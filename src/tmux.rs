@@ -12,7 +12,17 @@ const SOCKET: &str = "worktree-browser";
 /// Limit for each short tmux query (`has-session`, `rename-session`, `display-message`).
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-pub fn prepare(common_dir: &Path, worktree: &Path) -> Result<BackendSettings, String> {
+/// Which session a terminal connection or switch landed on, so the app can tell
+/// the user when an earlier session for this worktree was closed (TRM-25).
+#[derive(Clone, Debug)]
+pub struct Opened {
+    /// Both names this worktree's session can have (short, then pre-migration legacy).
+    pub names: [String; 2],
+    /// True when the session already existed, so the terminal resumes it.
+    pub resumed: bool,
+}
+
+pub fn prepare(common_dir: &Path, worktree: &Path) -> Result<(BackendSettings, Opened), String> {
     let worktree = canonical_worktree(worktree)?;
     let executable = find_tmux()?;
     let program = executable.to_str().ok_or_else(|| {
@@ -23,7 +33,10 @@ pub fn prepare(common_dir: &Path, worktree: &Path) -> Result<BackendSettings, St
     })?;
     let names = SessionNames::new(common_dir, &worktree);
     let name = names.migrate(|| tmux_command(&executable));
-    Ok(settings(program.to_owned(), name, worktree))
+    // After migration the chosen name exists exactly when there's a session to resume.
+    let resumed = has_session(tmux_command(&executable), name);
+    let backend = settings(program.to_owned(), name, worktree);
+    Ok((backend, names.opened(resumed)))
 }
 
 /// Switches the tmux client with process id `client_pid` (the one running
@@ -31,7 +44,11 @@ pub fn prepare(common_dir: &Path, worktree: &Path) -> Result<BackendSettings, St
 /// is reused instead of starting a new client. A missing session is created
 /// first, detached, in the worktree directory. Blocking: run it off the UI
 /// thread. On any error the caller falls back to `prepare`.
-pub fn switch_client(client_pid: u32, common_dir: &Path, worktree: &Path) -> Result<(), String> {
+pub fn switch_client(
+    client_pid: u32,
+    common_dir: &Path,
+    worktree: &Path,
+) -> Result<Opened, String> {
     let executable = find_tmux()?;
     switch_client_with(
         || tmux_command(&executable),
@@ -46,11 +63,12 @@ fn switch_client_with(
     client_pid: u32,
     common_dir: &Path,
     worktree: &Path,
-) -> Result<(), String> {
+) -> Result<Opened, String> {
     let worktree = canonical_worktree(worktree)?;
     let names = SessionNames::new(common_dir, &worktree);
     let name = names.migrate(&tmux).to_owned();
-    if !has_session(tmux(), &name) {
+    let resumed = has_session(tmux(), &name);
+    if !resumed {
         // Like the terminal in `prepare`, the first pane inherits this
         // command's working directory: no tmux format expansion of `-c`,
         // and non-UTF-8 paths survive.
@@ -67,7 +85,8 @@ fn switch_client_with(
     run(
         tmux().args(["switch-client", "-c", &client, "-t", &format!("={name}")]),
         "switch the tmux client",
-    )
+    )?;
+    Ok(names.opened(resumed))
 }
 
 /// The name tmux uses for the client process `pid` (usually its tty).
@@ -223,6 +242,97 @@ fn match_sessions<K>(
         .collect()
 }
 
+/// Both session names a worktree can have (short, then legacy). `worktree`
+/// must already be canonical, as `prepare` makes it.
+pub fn session_names(common_dir: &Path, worktree: &Path) -> [String; 2] {
+    SessionNames::new(common_dir, worktree).both()
+}
+
+/// True for names this app generates: `wt-` plus 10 (current) or 32 (legacy)
+/// lowercase hex digits. Anything else on the socket was made by someone else
+/// and is never cleaned up (TRM-23).
+pub fn is_app_session(name: &str) -> bool {
+    name.strip_prefix("wt-").is_some_and(|hex| {
+        matches!(hex.len(), 10 | 32) && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
+/// Returns a factory for commands that talk to the app's tmux server.
+///
+/// It returns a closure (`impl Fn`) rather than a `Command` because a
+/// `Command` is used up once it runs; callers that need several commands just
+/// call the closure again. Tests pass a closure for a private server instead.
+pub fn app_server() -> Result<impl Fn() -> Command, String> {
+    let executable = find_tmux()?;
+    Ok(move || tmux_command(&executable))
+}
+
+/// One session as the idle cleanup sees it (TRM-22).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdleSession {
+    pub name: String,
+    pub attached: bool,
+    /// Unix seconds of the last key press or attach (`#{session_activity}`).
+    /// Program output does not count, unlike the badges' `window_activity`.
+    pub last_input: u64,
+}
+
+/// Lists every session on the server with its attach state and last input.
+/// Returns nothing if no server is running. Blocking: run it off the UI thread.
+pub fn idle_sessions(tmux: impl Fn() -> Command) -> Vec<IdleSession> {
+    let mut command = tmux();
+    command.args([
+        "list-sessions",
+        "-F",
+        // The name goes last so the first two tab-separated fields are always numbers.
+        "#{session_attached}\t#{session_activity}\t#{session_name}",
+    ]);
+    match runner::run(&mut command, TIMEOUT) {
+        Ok(out) if out.status.success() => parse_idle_sessions(&out.stdout),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_idle_sessions(stdout: &[u8]) -> Vec<IdleSession> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(3, '\t');
+            let attached = fields.next()?.parse::<u32>().ok()?;
+            let last_input = fields.next()?.parse().ok()?;
+            Some(IdleSession {
+                name: fields.next()?.to_owned(),
+                attached: attached > 0,
+                last_input,
+            })
+        })
+        .collect()
+}
+
+/// Kills an app session unless a client is attached to it, and reports
+/// whether it is gone.
+///
+/// The attached check runs inside the tmux server as part of the same command
+/// (`if-shell -F` evaluates a format; it does not start a shell), so a
+/// terminal that attaches between listing and closing is never cut off.
+pub fn close_if_detached(tmux: impl Fn() -> Command, name: &str) -> bool {
+    if !is_app_session(name) {
+        return false;
+    }
+    let target = format!("={name}");
+    let mut command = tmux();
+    command.args([
+        "if-shell",
+        "-F",
+        "-t",
+        &format!("{target}:"),
+        "#{==:#{session_attached},0}",
+        &format!("kill-session -t {target}"),
+    ]);
+    let _ = runner::run(&mut command, TIMEOUT);
+    !has_session(tmux(), name)
+}
+
 /// The tmux client runs in the PTY with the app's environment plus `env` below. The
 /// backend can only add variables, so the Git overrides are removed from the app's
 /// own environment at startup instead (`runner::remove_git_overrides_from_process`).
@@ -286,6 +396,17 @@ impl SessionNames {
         &self.legacy[..13] // wt- followed by ten hex digits.
     }
 
+    fn both(&self) -> [String; 2] {
+        [self.short().to_owned(), self.legacy.clone()]
+    }
+
+    fn opened(&self, resumed: bool) -> Opened {
+        Opened {
+            names: self.both(),
+            resumed,
+        }
+    }
+
     fn migrate(&self, tmux: impl Fn() -> Command) -> &str {
         // tmux refuses to rename a session onto an existing name. If that happens,
         // keep using the old name instead of attaching to the other session.
@@ -322,7 +443,7 @@ fn find_tmux() -> Result<PathBuf, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{
         git,

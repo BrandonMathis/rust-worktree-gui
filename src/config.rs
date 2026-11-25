@@ -76,6 +76,12 @@ impl Store {
         Self::open_path(support_dir()?.join("projects.json"))
     }
 
+    /// The log of tmux sessions the idle cleanup closed, next to the bookmarks
+    /// (TRM-25).
+    pub fn closed_sessions_path(&self) -> PathBuf {
+        self.path.with_file_name("closed-sessions.json")
+    }
+
     pub(crate) fn open_path(path: PathBuf) -> Result<(Self, Vec<ProjectBookmark>), String> {
         let store = Self { path };
         let projects = store.load()?;

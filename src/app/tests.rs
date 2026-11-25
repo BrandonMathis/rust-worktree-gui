@@ -1094,7 +1094,7 @@ fn attach_terminal(app: &mut App, worktree: &Path) {
         working_directory: Some(worktree.to_path_buf()),
         env: Default::default(),
     };
-    let _ = app.update(Message::Prepared(id, Ok(shell)));
+    let _ = app.update(Message::Prepared(id, Ok(shell.into())));
     assert!(matches!(app.console, ConsoleState::Attached(_)));
 }
 
@@ -1119,9 +1119,9 @@ fn switching_worktrees_reuses_the_running_terminal_client() {
     let switch = switch_id(&app);
     assert_eq!(app.console.console().unwrap().id(), terminal);
     assert_eq!(app.update(Message::Reconnect).units(), 0, "one at a time");
-    let _ = app.update(Message::Switched(switch - 1, Ok(())));
+    let _ = app.update(Message::Switched(switch - 1, Ok(None)));
     assert_eq!(switch_id(&app), switch, "a stale result is ignored");
-    let _ = app.update(Message::Switched(switch, Ok(())));
+    let _ = app.update(Message::Switched(switch, Ok(None)));
     let ConsoleState::Attached(console) = &app.console else {
         panic!("expected the terminal to stay attached");
     };
@@ -1135,7 +1135,7 @@ fn switching_worktrees_reuses_the_running_terminal_client() {
     let to_root = switch_id(&app);
     let _ = app.update(Message::SelectWorktree(id, linked.clone()));
     assert_eq!(switch_id(&app), to_root, "no second switch-client at once");
-    assert_eq!(app.update(Message::Switched(to_root, Ok(()))).units(), 1);
+    assert_eq!(app.update(Message::Switched(to_root, Ok(None))).units(), 1);
     let to_linked = switch_id(&app);
     assert_ne!(to_linked, to_root);
 
@@ -2155,4 +2155,33 @@ fn quitting_ends_agent_conversations_so_their_bridges_stop() {
         commands.try_recv(),
         Err(iced::futures::channel::mpsc::TryRecvError::Closed)
     ));
+}
+
+#[test]
+fn session_cleanup_runs_in_the_background_one_sweep_at_a_time() {
+    let (_tmp, mut app, ..) = app_with_linked_checkout();
+    assert_eq!(app.update(Message::SweepSessions).units(), 1);
+    assert_eq!(app.update(Message::SweepSessions).units(), 0);
+    let _ = app.update(Message::SessionsSwept(Err("Could not read log".into())));
+    assert_eq!(app.notice.as_deref(), Some("Could not read log"));
+    assert_eq!(app.update(Message::SweepSessions).units(), 1);
+
+    // Without bookmarks every session would look orphaned, so nothing is swept.
+    let (mut app, _) = App::from_bookmarks(Err("Could not read projects.json".into()));
+    assert_eq!(app.update(Message::SweepSessions).units(), 0);
+}
+
+#[test]
+fn switching_into_a_closed_session_shows_why_it_was_closed() {
+    let (_tmp, mut app, id, root, linked) = app_with_linked_checkout();
+    let _ = app.update(Message::SelectWorktree(id, root.clone()));
+    answer_pr_lookups(&mut app, id, 1);
+    attach_terminal(&mut app, &root);
+
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+    let switch = switch_id(&app);
+    let notice = "Started a new terminal session. The previous one was closed automatically.";
+    let _ = app.update(Message::Switched(switch, Ok(Some(notice.into()))));
+    assert_eq!(app.notice.as_deref(), Some(notice));
+    assert!(matches!(app.console, ConsoleState::Attached(_)));
 }

@@ -10,11 +10,13 @@ use super::view::placeholder;
 use super::{App, Message, Project, background};
 use crate::git::Worktree;
 use crate::icons;
+use crate::session_cleanup;
 use crate::style::{self, Button, Corners, Panel};
 use crate::terminal::Console;
 use crate::tmux;
 use iced::widget::{button, column, container, row, text, tooltip};
 use iced::{Center, Element, Fill, Task};
+use iced_term::settings::BackendSettings;
 use std::path::{Path, PathBuf};
 
 /// The terminal pane's connection. `Connecting` and `Switching` carry the
@@ -35,6 +37,33 @@ pub(super) enum ConsoleState {
         target: PathBuf,
     },
     Failed(String),
+}
+
+/// A terminal that is ready to open, plus a notice if the worktree's previous
+/// session had been closed by the idle cleanup (TRM-25).
+#[derive(Debug, Clone)]
+pub struct Connection {
+    backend: BackendSettings,
+    closed_notice: Option<String>,
+}
+
+/// Lets tests and the perf harness hand in bare settings as a finished
+/// `prepare` would, with no notice.
+impl From<BackendSettings> for Connection {
+    fn from(backend: BackendSettings) -> Self {
+        Self {
+            backend,
+            closed_notice: None,
+        }
+    }
+}
+
+/// Clears the worktree's entries from the closed-session log and returns the
+/// notice to show, if any. Blocking (file I/O): call it off the UI thread.
+fn closed_notice(log: Option<PathBuf>, opened: &tmux::Opened) -> Option<String> {
+    let log = log?;
+    let now = session_cleanup::unix_now();
+    session_cleanup::acknowledge(&log, &opened.names, opened.resumed, now)
 }
 
 impl ConsoleState {
@@ -116,8 +145,15 @@ impl App {
         self.next_console_id += 1;
         let id = self.next_console_id;
         self.console = ConsoleState::Connecting(id);
+        let closed_log = self.closed_sessions_log();
         background(
-            move || tmux::prepare(&common_dir, &worktree),
+            move || {
+                let (backend, opened) = tmux::prepare(&common_dir, &worktree)?;
+                Ok(Connection {
+                    backend,
+                    closed_notice: closed_notice(closed_log, &opened),
+                })
+            },
             move |result| Message::Prepared(id, result),
         )
     }
@@ -138,13 +174,30 @@ impl App {
             console,
             target: target.clone(),
         };
+        let closed_log = self.closed_sessions_log();
         background(
-            move || tmux::switch_client(client, &common_dir, &target),
+            move || {
+                let opened = tmux::switch_client(client, &common_dir, &target)?;
+                Ok(closed_notice(closed_log, &opened))
+            },
             move |result| Message::Switched(id, result),
         )
     }
 
-    pub(super) fn switched(&mut self, id: u64, result: Result<(), String>) -> Task<Message> {
+    /// Where closed sessions are logged, or `None` without a bookmark store.
+    fn closed_sessions_log(&self) -> Option<PathBuf> {
+        self.store
+            .as_ref()
+            .map(crate::config::Store::closed_sessions_path)
+    }
+
+    /// `result` carries the notice to show if the worktree's previous session
+    /// had been closed by the idle cleanup (TRM-25).
+    pub(super) fn switched(
+        &mut self,
+        id: u64,
+        result: Result<Option<String>, String>,
+    ) -> Task<Message> {
         if !matches!(self.console, ConsoleState::Switching { id: current, .. } if current == id) {
             return Task::none();
         }
@@ -156,10 +209,14 @@ impl App {
         else {
             return Task::none();
         };
-        if result.is_err() {
+        let closed_notice = match result {
+            Ok(notice) => notice,
             // Start a fresh terminal instead. `console` is dropped here, which
             // ends its tmux client; the sessions keep running.
-            return self.connect();
+            Err(_) => return self.connect(),
+        };
+        if closed_notice.is_some() {
+            self.notice = closed_notice;
         }
         console.switched_to(target.clone());
         self.console = ConsoleState::Attached(console);
@@ -177,7 +234,7 @@ impl App {
     pub(super) fn prepared(
         &mut self,
         id: u64,
-        result: Result<iced_term::settings::BackendSettings, String>,
+        result: Result<Connection, String>,
     ) -> Task<Message> {
         if !matches!(self.console, ConsoleState::Connecting(current) if current == id) {
             return Task::none();
@@ -190,16 +247,20 @@ impl App {
             self.console = ConsoleState::Detached;
             return Task::none();
         };
-        match result.and_then(|backend| {
-            Console::open(
+        match result.and_then(|connection| {
+            let console = Console::open(
                 id,
                 worktree.clone(),
-                backend,
+                connection.backend,
                 &self.terminal_preferences,
                 self.window_scale,
-            )
+            )?;
+            Ok((console, connection.closed_notice))
         }) {
-            Ok(console) => {
+            Ok((console, closed_notice)) => {
+                if closed_notice.is_some() {
+                    self.notice = closed_notice;
+                }
                 self.console = ConsoleState::Attached(Box::new(console));
                 self.mark_session_seen(project_id, &worktree);
                 self.focus_terminal()
