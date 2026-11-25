@@ -50,10 +50,6 @@ pub enum Step {
     Key(Keystroke),
     /// Unmeasured: a command for the terminal program (`echo::RESET`, …).
     Terminal(u8),
-    /// Unmeasured: opens the worktree's Rename field and focuses it.
-    OpenRename,
-    /// Unmeasured: empties the Rename field.
-    ClearRename,
 }
 
 pub struct Scenario {
@@ -115,14 +111,6 @@ pub fn all() -> Vec<Scenario> {
             setup: reset,
             cycle: vec![Step::Key(PageDown)],
         },
-        Scenario {
-            name: "rename_field_typing",
-            description: "Type into the worktree Rename field in the header (app UI, no terminal)",
-            setup: vec![Step::OpenRename],
-            cycle: std::iter::once(Step::ClearRename)
-                .chain(keys(letters(20)))
-                .collect(),
-        },
     ]
 }
 
@@ -150,7 +138,7 @@ mod tests {
     // at the smallest window size (820×440 is about 20 rows of 60 columns).
     #[test]
     fn every_measured_terminal_key_changes_the_screen() {
-        for scenario in all().iter().filter(|s| s.name != "rename_field_typing") {
+        for scenario in all() {
             let mut editor = LineEditor::default();
             let mut size = || Some((20, 60));
             let steps = scenario
@@ -166,9 +154,6 @@ mod tests {
                     ),
                     Step::Terminal(command) => {
                         editor.feed(&[COMMAND, command], &mut size);
-                    }
-                    Step::OpenRename | Step::ClearRename => {
-                        panic!("{}: not a terminal step", scenario.name)
                     }
                 }
             }

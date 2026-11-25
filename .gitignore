@@ -3,8 +3,10 @@
 /agent-bridge/node_modules/
 .DS_Store
 # Project skills live in .agents/skills. Track the .claude/skills symlink to them
-# (Claude Code reads that path) and keep the rest of .claude ignored, overriding
-# a global ignore of .claude.
+# (Claude Code reads that path) and the shared .claude/settings.json, and keep the
+# rest of .claude (settings.local.json, worktrees) ignored, overriding a global
+# ignore of .claude.
 !/.claude/
 /.claude/*
 !/.claude/skills
+!/.claude/settings.json

@@ -180,26 +180,21 @@ impl Harness {
 
     /// Runs one unmeasured step, or measures a keystroke.
     pub fn step(&mut self, step: Step) -> Result<Option<Phases>, String> {
-        let task = match step {
+        match step {
             Step::Key(key) => {
                 let phases = self.press(key)?;
                 // Let any trailing output land before the next key.
                 self.settle_for(Duration::from_millis(5))?;
-                return Ok(Some(phases));
+                Ok(Some(phases))
             }
             Step::Terminal(command) => {
                 let task = self
                     .app
                     .perf_write_terminal(vec![super::echo::COMMAND, command]);
                 self.run_task(task)?;
-                return self.expect_output(KEY_TIMEOUT).map(|()| None);
+                self.expect_output(KEY_TIMEOUT).map(|()| None)
             }
-            Step::OpenRename => self.app.perf_open_rename(),
-            Step::ClearRename => self.app.perf_clear_rename(),
-        };
-        self.run_task(task)?;
-        self.settle()?;
-        Ok(None)
+        }
     }
 
     /// Presses `key` and returns how long the screen took to change.
