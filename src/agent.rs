@@ -15,7 +15,7 @@ use std::fmt;
 use std::path::Path;
 
 /// A coding agent the app can drive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Harness {
     Claude,
@@ -131,6 +131,14 @@ pub enum Event {
     },
     /// The bridge could not do what a command asked.
     Error { message: String },
+    /// The harness's own id for the conversation, which
+    /// [`Command::Start`]'s `resume` takes to continue it later.
+    Session { id: String },
+    /// A prompt the user sent, read back from a saved conversation.
+    User { text: String },
+    /// The answer to [`Command::History`]: a saved conversation's prompts
+    /// ([`Event::User`]) and content events, oldest first.
+    History { items: Vec<Event> },
 }
 
 impl Event {
@@ -156,6 +164,14 @@ pub enum Command {
         /// The model has thinking levels, so it can be asked to summarize its
         /// reasoning (Claude returns no thinking text otherwise).
         thinking_summaries: bool,
+        /// A conversation the harness saved (an [`Event::Session`] id) to
+        /// continue instead of starting a new one.
+        resume: Option<String>,
+    },
+    /// Reads back a conversation the harness saved, to show it again.
+    History {
+        harness: Harness,
+        resume: String,
     },
     Prompt {
         text: String,
@@ -218,9 +234,26 @@ impl Transcript {
         self.items.push(Item::Notice(text));
     }
 
+    /// Puts `earlier` (a saved conversation read back from the harness)
+    /// before everything in this transcript. A tool call it saved without a
+    /// result never finished (its turn was stopped), so it shows as failed.
+    pub fn prepend(&mut self, mut earlier: Transcript) {
+        for item in &mut earlier.items {
+            if let Item::Tool { status, .. } = item
+                && *status == ToolStatus::Running
+            {
+                *status = ToolStatus::Failed;
+            }
+        }
+        let count = earlier.items.len();
+        // `splice` replaces the empty range at the front with the earlier items.
+        self.items.splice(0..0, earlier.items);
+        self.turn_start += count;
+    }
+
     /// Folds a streamed event into the transcript. Events that aren't
-    /// transcript content (`Models`, `TurnEnd`, `Error`) are ignored: the app
-    /// handles those.
+    /// transcript content (`Models`, `TurnEnd`, `Error`, `Session`, `History`)
+    /// are ignored: the app handles those. A `User` item starts a new turn.
     pub fn apply(&mut self, event: Event) {
         let turn = &mut self.items[self.turn_start..];
         match event {
@@ -318,7 +351,12 @@ impl Transcript {
                 }
             }
             Event::Notice { text } => self.push_notice(text),
-            Event::Models(_) | Event::TurnEnd { .. } | Event::Error { .. } => {}
+            Event::User { text } => self.push_user(text),
+            Event::Models(_)
+            | Event::TurnEnd { .. }
+            | Event::Error { .. }
+            | Event::Session { .. }
+            | Event::History { .. } => {}
         }
     }
 
@@ -573,6 +611,12 @@ mod tests {
                 error: Some("No credit".into()),
             }
         );
+        assert_eq!(
+            event(r#"{"type":"session","id":"0193-abc"}"#),
+            Event::Session {
+                id: "0193-abc".into()
+            }
+        );
         let models = event(
             r#"{"type":"models","default_model":"b","models":[
                 {"id":"a","name":"A","thinking":["low","high"],"default_thinking":"low"},
@@ -598,9 +642,21 @@ mod tests {
                 model: Some("gpt".into()),
                 thinking: None,
                 thinking_summaries: true,
+                resume: None,
             })
             .unwrap(),
-            r#"{"type":"start","harness":"codex","model":"gpt","thinking":null,"thinking_summaries":true}"#
+            r#"{"type":"start","harness":"codex","model":"gpt","thinking":null,"thinking_summaries":true,"resume":null}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Command::Start {
+                harness: Harness::Pi,
+                model: None,
+                thinking: None,
+                thinking_summaries: false,
+                resume: Some("s1".into()),
+            })
+            .unwrap(),
+            r#"{"type":"start","harness":"pi","model":null,"thinking":null,"thinking_summaries":false,"resume":"s1"}"#
         );
         assert_eq!(
             serde_json::to_string(&Command::Prompt {

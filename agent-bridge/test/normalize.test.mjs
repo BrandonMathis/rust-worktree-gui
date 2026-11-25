@@ -7,10 +7,12 @@ import {
   CLIP,
   ClaudeNormalizer,
   PiNormalizer,
+  claudeHistory,
   claudeModels,
   clip,
   codexEvents,
   codexModels,
+  piHistory,
   piModels,
   resultText,
 } from "../normalize.mjs";
@@ -87,6 +89,20 @@ test("Claude: subagent chatter is dropped and failed tools are marked", () => {
   assert.deepEqual(events, [{ type: "tool", id: "t", status: "failed", output: "denied" }]);
 });
 
+test("Claude: the session id is reported when it first appears and when it changes", () => {
+  const normalizer = new ClaudeNormalizer();
+  const events = all(normalizer, [
+    { type: "system", subtype: "init", parent_tool_use_id: null, session_id: "s1" },
+    { type: "result", subtype: "success", is_error: false, session_id: "s1" },
+    { type: "system", subtype: "init", parent_tool_use_id: null, session_id: "s2" },
+  ]);
+  assert.deepEqual(events, [
+    { type: "session", id: "s1" },
+    { type: "turn_end", status: "done" },
+    { type: "session", id: "s2" },
+  ]);
+});
+
 test("Claude: a message that never streamed (an API error) still shows its text", () => {
   const normalizer = new ClaudeNormalizer();
   const events = normalizer.events({
@@ -157,7 +173,7 @@ test("Codex: turns end as done or failed", () => {
   assert.deepEqual(codexEvents({ type: "error", message: "Reconnecting… 1/5" }), [
     { type: "notice", text: "Reconnecting… 1/5" },
   ]);
-  assert.deepEqual(codexEvents({ type: "thread.started", thread_id: "t" }), []);
+  assert.deepEqual(codexEvents({ type: "thread.started", thread_id: "t" }), [{ type: "session", id: "t" }]);
 });
 
 test("Pi: message updates stream as deltas and tool executions as rows", () => {
@@ -235,4 +251,67 @@ test("model lists share one shape across the three harnesses", () => {
   assert.equal(pi.models[1].default_thinking, null);
   // Settings that name a model the user can't use fall back to the first one.
   assert.equal(piModels([{ provider: "p", id: "m" }], levels, { provider: "x", model: "y" }).default_model, "p/m");
+});
+
+test("Claude: a saved session reads back as prompts, replies and finished tool calls", () => {
+  const items = claudeHistory([
+    { type: "user", uuid: "u1", parent_tool_use_id: null, message: { role: "user", content: "Fix the test" } },
+    {
+      type: "assistant",
+      uuid: "a1",
+      parent_tool_use_id: null,
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Look first." },
+          { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } },
+        ],
+      },
+    },
+    { type: "assistant", uuid: "s1", parent_tool_use_id: "t1", message: { content: [{ type: "text", text: "sub" }] } },
+    {
+      type: "user",
+      uuid: "u2",
+      parent_tool_use_id: null,
+      message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "a.rs", is_error: false }] },
+    },
+    { type: "assistant", uuid: "a2", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Done." }] } },
+    {
+      type: "user",
+      uuid: "u3",
+      parent_tool_use_id: null,
+      message: { content: [{ type: "text", text: "[Request interrupted by user]" }] },
+    },
+  ]);
+  assert.deepEqual(items, [
+    { type: "user", text: "Fix the test" },
+    { type: "thinking", id: "a1:0", text: "Look first." },
+    { type: "tool", id: "t1", name: "Bash", input: { command: "ls" }, status: "running" },
+    { type: "tool", id: "t1", status: "done", output: "a.rs" },
+    { type: "text", id: "a2:0", text: "Done." },
+    { type: "notice", text: "Stopped." },
+  ]);
+});
+
+test("Pi: a saved session reads back as prompts, replies, tool calls and errors", () => {
+  const items = piHistory([
+    { role: "user", content: [{ type: "text", text: "Hi" }] },
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hidden", redacted: true },
+        { type: "text", text: "Looking." },
+        { type: "toolCall", id: "c1", name: "read", arguments: { path: "a" } },
+      ],
+    },
+    { role: "toolResult", toolCallId: "c1", toolName: "read", content: [{ type: "text", text: "body" }], isError: true },
+    { role: "assistant", content: [], stopReason: "error", errorMessage: "No credit" },
+  ]);
+  assert.deepEqual(items, [
+    { type: "user", text: "Hi" },
+    { type: "text", id: "m1:1", text: "Looking." },
+    { type: "tool", id: "c1", name: "read", input: { path: "a" }, status: "running" },
+    { type: "tool", id: "c1", name: "read", status: "failed", output: "body" },
+    { type: "notice", text: "No credit" },
+  ]);
 });

@@ -68,11 +68,12 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 | `app/terminal_pane.rs` | `ConsoleState`, connect/prepared, switching the running client to another worktree (`switch-client`, with a full-connect fallback), and the header status and pane. |
 | `app/unavailable.rs` | The modal listing a project's unavailable worktrees (hidden from the sidebar), opened from the project's ⋮ menu. |
 | `app/creation.rs` | Opens and submits the New Project / New Worktree form (`create::Draft` is the nested component). |
-| `app/managed.rs` | Managed worktrees: the bridge install state, per-harness model lists, one `Session` per worktree (composer, transcript, follow-up queue, `Run` state), and the agent pane. |
+| `app/managed.rs` | Managed worktrees: the bridge install state, per-harness model lists, one `Session` per worktree (composer, transcript, follow-up queue, `Run` state), earlier chats, restoring and saving them across restarts, and the agent pane. |
 | `app/sidebar.rs`, `app/view.rs`, `app/widgets.rs` | Sidebar (rows, icons, hover preview); window layout, workspace and header; shared view helpers. |
 | `app/tests.rs` | State-machine tests driven through `App::update`. |
 | `git.rs` | `discover` (resolve the checkout and its common dir) and `inventory` (`git worktree list --porcelain -z` parser). |
 | `config.rs` | Bookmark store in `~/Library/Application Support/Worktree Browser/projects.json`, and the shared atomic JSON write. |
+| `conversations.rs` | The agent conversations each managed worktree can resume after a restart (`conversations.json`): harness, its conversation id, model, first prompt. |
 | `theme.rs` | The palette (eleven Dracula colors), presets, hex/HSV conversion, and the saved `theme.json`. |
 | `settings.rs`, `color_wheel.rs` | Full-window Settings modal (a nested Elm component returning an `Outcome`); canvas hue/saturation wheel. |
 | `tmux.rs` | Session naming, the private socket, backend settings, pane directory lookup, read-only session activity. |
@@ -96,7 +97,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 ## Rules
 
 - **Never commit code review documents.** Review findings, audits and refactor wish lists (for example a `CODE_REVIEW.md`) must not be checked into source control. Keep them out of the repository (in the PR, an issue, or an untracked local file) and record the outcome as FRD rows and tests instead.
-- **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names, which worktrees are managed, and the theme palette are the only persisted state. Agent conversations are not saved.
+- **Git is the source of truth.** Never cache the worktree inventory and never depend on the Pi worktree extension. Bookmarks, display names, which worktrees are managed, the theme palette, and which agent conversations each managed worktree can resume (`conversations.json`: the harness's id for each conversation, never its messages) are the only persisted state. The messages live in the harness's own session files and are read back through the bridge.
 - **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's `~/.tmux.conf` or Alacritty config. Removing a project removes only the bookmark.
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; paths may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.
 - **No blocking work on the UI thread.** Run git, tmux, `gh` and `open` through `background(...)` or `Task::perform`, and return typed results as a `Message`. Guard async results with a request or epoch id so stale answers are ignored. Follow the existing patterns: `pr_request_id`, `refresh_id`, the `Connecting(id)` console state.

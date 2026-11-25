@@ -1263,7 +1263,7 @@ fn unavailable_worktrees_leave_the_sidebar_for_a_list_in_the_project_menu() {
 use crate::agent::{Command, Event, Harness, Item, Model, Models, ToolStatus, TurnStatus};
 use crate::agent_bridge::{Bridge, Prepared, Update};
 use iced::futures::channel::mpsc::UnboundedReceiver;
-use managed::{AgentBadge, BridgeState, ManagedMessage, ModelList, Run, ThinkingChoice};
+use managed::{AgentBadge, BridgeState, ManagedMessage, ModelList, Replay, Run, ThinkingChoice};
 
 fn models(default: &str, entries: &[(&str, &[&str], Option<&str>)]) -> Models {
     Models {
@@ -1507,6 +1507,7 @@ fn the_first_prompt_starts_the_chosen_harness_model_and_thinking_level() {
             model: Some("sonnet".into()),
             thinking: None,
             thinking_summaries: true,
+            resume: None,
         }
     );
 
@@ -1541,6 +1542,7 @@ fn the_first_prompt_starts_the_chosen_harness_model_and_thinking_level() {
             model: Some("gpt-a".into()),
             thinking: Some("low".into()),
             thinking_summaries: true,
+            resume: None,
         }
     );
     // Thinking levels belong to a model, so changing the model resets the level.
@@ -1552,6 +1554,7 @@ fn the_first_prompt_starts_the_chosen_harness_model_and_thinking_level() {
             model: Some("gpt-b".into()),
             thinking: None,
             thinking_summaries: false,
+            resume: None,
         }
     );
 
@@ -1707,7 +1710,7 @@ fn agent_activity_streams_into_collapsed_rows_that_expand_on_click() {
 }
 
 #[test]
-fn a_new_chat_drops_the_conversation_and_ignores_its_late_events() {
+fn a_new_chat_sets_the_conversation_aside_and_ignores_its_late_events() {
     let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
     let opus = models("opus", &[("opus", &["high"], None)]).models[0].clone();
     let _ = app.update(managed(ManagedMessage::Model(opus)));
@@ -1741,6 +1744,230 @@ fn a_new_chat_drops_the_conversation_and_ignores_its_late_events() {
     let session = &app.managed.sessions[&linked];
     assert!(session.transcript.is_empty());
     assert!(matches!(session.run, Run::New));
+
+    // The old conversation is kept, stopped, with its unsent follow-up.
+    let history = &app.managed.history[&linked];
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].title(), "go");
+    assert!(matches!(history[0].run, Run::Ended));
+    assert!(matches!(
+        history[0].transcript.items().last(),
+        Some(Item::Notice(text)) if text == "Stopped."
+    ));
+    assert_eq!(history[0].draft(), "queued");
+
+    // A fresh chat that was never used isn't kept.
+    let _ = app.update(managed(ManagedMessage::NewChat));
+    assert_eq!(app.managed.history[&linked].len(), 1);
+}
+
+#[test]
+fn an_earlier_chat_resumes_the_harness_conversation_it_left() {
+    let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let _first = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
+    let _ = submit(&mut app, "Fix the flaky test");
+    let first = app.managed.sessions[&linked].id();
+    let session_id = |id: &str| Update::Event(Event::Session { id: id.into() });
+    let _ = app.update(managed(ManagedMessage::Bridge(
+        linked.clone(),
+        first,
+        session_id("claude-1"),
+    )));
+    let _ = app.update(managed(ManagedMessage::NewChat));
+
+    // A second chat that is set aside before its harness names it learns the
+    // id from its stopping bridge.
+    let _second = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
+    let _ = submit(&mut app, "Write the changelog");
+    let second = app.managed.sessions[&linked].id();
+    let _ = app.update(managed(ManagedMessage::NewChat));
+    let _ = app.update(managed(ManagedMessage::Bridge(
+        linked.clone(),
+        second,
+        session_id("claude-2"),
+    )));
+    let history = &app.managed.history[&linked];
+    let titles: Vec<_> = history.iter().map(|earlier| earlier.title()).collect();
+    assert_eq!(titles, ["Fix the flaky test", "Write the changelog"]);
+    assert_eq!(history[1].resume.as_deref(), Some("claude-2"));
+    assert!(app.managed.sessions[&linked].transcript.is_empty());
+
+    // Resuming brings the transcript back, keeps what was typed in the fresh
+    // form, and restarts the harness on its saved conversation.
+    type_prompt(&mut app, "now the docs");
+    let _ = app.update(managed(ManagedMessage::Resume(0)));
+    let session = &app.managed.sessions[&linked];
+    assert_eq!(user_prompts(&app, &linked), ["Fix the flaky test"]);
+    assert_eq!(session.draft(), "now the docs");
+    assert_ne!(session.id(), first, "the old bridge's events stay ignored");
+    assert!(matches!(
+        session.start_command(None),
+        Command::Start { resume: Some(id), .. } if id == "claude-1"
+    ));
+    assert_eq!(app.managed.history[&linked].len(), 1);
+
+    let start = app.update(managed(ManagedMessage::Submit));
+    assert_eq!(start.units(), 1, "the agent starts again");
+    let session = &app.managed.sessions[&linked];
+    assert!(session.working());
+    assert_eq!(
+        user_prompts(&app, &linked),
+        ["Fix the flaky test", "now the docs"]
+    );
+    assert!(
+        !session
+            .transcript
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Notice(text) if text.contains("remember"))),
+        "a resumed agent remembers the conversation, so nothing says otherwise"
+    );
+
+    // Resuming from a running conversation sets that one aside in turn.
+    let _ = app.update(managed(ManagedMessage::Resume(0)));
+    assert_eq!(user_prompts(&app, &linked), ["Write the changelog"]);
+    let titles: Vec<_> = app.managed.history[&linked]
+        .iter()
+        .map(|earlier| earlier.title())
+        .collect();
+    assert_eq!(titles, ["Fix the flaky test"]);
+    assert!(!app.agents_working());
+
+    // An index that isn't listed changes nothing.
+    let _ = app.update(managed(ManagedMessage::Resume(5)));
+    assert_eq!(user_prompts(&app, &linked), ["Write the changelog"]);
+}
+
+#[test]
+fn a_conversation_resumes_where_it_left_off_after_the_app_restarts() {
+    let (tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
+    let saved = tmp.path().join("config/conversations.json");
+    app.managed.store = Some(crate::conversations::Store::at(saved.clone()));
+    let session_id = |id: &str| Update::Event(Event::Session { id: id.into() });
+
+    // One chat set aside under Earlier chats, and the one the pane shows.
+    let _first = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
+    let _ = submit(&mut app, "Fix the flaky test");
+    let first = app.managed.sessions[&linked].id();
+    let _ = app.update(managed(ManagedMessage::Bridge(
+        linked.clone(),
+        first,
+        session_id("claude-1"),
+    )));
+    let _ = app.update(managed(ManagedMessage::NewChat));
+    let opus = models("opus", &[("opus", &["high"], None)]).models[0].clone();
+    let _ = app.update(managed(ManagedMessage::Model(opus)));
+    let _ = app.update(managed(ManagedMessage::Thinking(ThinkingChoice::Level(
+        "high".into(),
+    ))));
+    let _second = app.managed.sessions.get_mut(&linked).unwrap().attach(false);
+    let _ = submit(&mut app, "Write the changelog");
+    let second = app.managed.sessions[&linked].id();
+    let _ = app.update(managed(ManagedMessage::Bridge(
+        linked.clone(),
+        second,
+        session_id("claude-2"),
+    )));
+    // Quitting stops the agents but keeps what can be resumed.
+    assert!(app.stop_agents());
+    drop(app);
+
+    // The app starts again from the same files.
+    let config = tmp.path().join("config/projects.json");
+    let (mut app, _) = App::from_bookmarks(Store::open_path(config));
+    let id = app.projects[0].id;
+    app.projects[0].inventory = Some(git::inventory(&app.projects[0].checkout).unwrap());
+    let store = crate::conversations::Store::at(saved);
+    app.restore_chats(store.load().unwrap());
+    app.managed.store = Some(store);
+    app.managed.bridge = BridgeState::Ready(Bridge::fake());
+    let _ = app.update(Message::SelectWorktree(id, linked.clone()));
+
+    // The pane shows the last conversation, not a new chat's form, and reads
+    // its messages back from the harness.
+    let session = &app.managed.sessions[&linked];
+    assert!(matches!(session.run, Run::Ended));
+    assert_eq!(session.replay, Replay::Loading);
+    assert_eq!(session.title(), "Write the changelog");
+    assert_eq!(
+        (session.model.as_deref(), session.thinking.as_deref()),
+        (Some("opus"), Some("high"))
+    );
+    let loaded = vec![
+        Event::User {
+            text: "Write the changelog".into(),
+        },
+        Event::Text {
+            id: "a:0".into(),
+            delta: None,
+            text: Some("Done.".into()),
+        },
+    ];
+    let id_now = session.id();
+    let _ = app.update(managed(ManagedMessage::HistoryLoaded(
+        linked.clone(),
+        id_now,
+        Ok(loaded),
+    )));
+    assert_eq!(user_prompts(&app, &linked), ["Write the changelog"]);
+    assert_eq!(app.managed.sessions[&linked].replay, Replay::Done);
+
+    // The next prompt resumes the harness's conversation, which remembers it.
+    let start = submit(&mut app, "Now the docs");
+    assert_eq!(start.units(), 1, "the agent starts again");
+    let session = &app.managed.sessions[&linked];
+    assert_eq!(session.resume.as_deref(), Some("claude-2"));
+    assert!(
+        !session
+            .transcript
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Notice(text) if text.contains("remember")))
+    );
+
+    // The earlier chat came back too, and reads its messages back when resumed.
+    let history = &app.managed.history[&linked];
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].title(), "Fix the flaky test");
+    assert_eq!(history[0].resume.as_deref(), Some("claude-1"));
+    let _ = app.update(managed(ManagedMessage::Resume(0)));
+    assert_eq!(app.managed.sessions[&linked].replay, Replay::Loading);
+    // A failed read is shown, and the conversation can still go on.
+    let id_now = app.managed.sessions[&linked].id();
+    let _ = app.update(managed(ManagedMessage::HistoryLoaded(
+        linked.clone(),
+        id_now,
+        Err("Could not load the earlier Claude conversation: gone".into()),
+    )));
+    assert!(matches!(
+        app.managed.sessions[&linked].transcript.items(),
+        [Item::Notice(text)] if text.ends_with("gone")
+    ));
+}
+
+#[test]
+fn saved_conversations_of_worktrees_no_longer_managed_are_not_restored() {
+    let (_tmp, mut app, id, _root, linked) = app_with_managed_worktree();
+    app.set_managed(id, &linked, false).unwrap();
+    let chat = crate::conversations::SavedChat {
+        harness: Harness::Pi,
+        resume: "pi-1".into(),
+        model: None,
+        thinking: None,
+        title: "Hello".into(),
+    };
+    app.managed.sessions.clear();
+    app.restore_chats(
+        [(
+            linked.clone(),
+            crate::conversations::SavedWorktree {
+                current: Some(chat),
+                earlier: Vec::new(),
+            },
+        )]
+        .into(),
+    );
+    assert!(!app.managed.sessions.contains_key(&linked));
 }
 
 #[test]
@@ -1766,6 +1993,28 @@ fn a_bridge_that_stops_ends_the_turn_and_returns_queued_follow_ups() {
     // Nothing the user wrote is lost.
     assert!(session.queue.is_empty());
     assert_eq!(session.draft(), "one\n\ntwo\n\nhalf typed");
+
+    // The next prompt starts the agent again. It can't remember the earlier
+    // messages unless the harness named its conversation, which it then resumes.
+    let restart = |app: &mut App, linked: &Path| {
+        let _ = app.update(managed(ManagedMessage::Submit));
+        let session = app.managed.sessions.get_mut(linked).unwrap();
+        let forgot = matches!(
+            session.transcript.items().iter().rev().nth(1),
+            Some(Item::Notice(text)) if text.contains("does not remember")
+        );
+        let id = session.id();
+        let _ = app.update(managed(ManagedMessage::Bridge(
+            linked.to_path_buf(),
+            id,
+            Update::Exited("Out of memory".into()),
+        )));
+        forgot
+    };
+    assert!(restart(&mut app, &linked));
+    app.managed.sessions.get_mut(&linked).unwrap().resume = Some("pi-1".into());
+    type_prompt(&mut app, "again");
+    assert!(!restart(&mut app, &linked));
 
     // A bridge-level error ends the turn like a failed one, and the session lives on.
     let (_tmp, mut app, _id, _root, linked) = app_with_managed_worktree();
@@ -1832,6 +2081,9 @@ fn an_unavailable_managed_worktree_starts_no_agent() {
 #[test]
 fn removing_a_project_stops_the_agents_in_its_worktrees() {
     let (_tmp, mut app, id, _root, linked) = app_with_managed_worktree();
+    let _ = submit(&mut app, "earlier");
+    let _ = app.update(managed(ManagedMessage::NewChat));
+    assert_eq!(app.managed.history[&linked].len(), 1);
     let mut commands = app.managed.sessions.get_mut(&linked).unwrap().attach(true);
     assert!(app.project_agents_working(id));
 
@@ -1843,6 +2095,7 @@ fn removing_a_project_stops_the_agents_in_its_worktrees() {
     assert!(app.projects.is_empty());
     // Nothing could show or stop the agent once its row is gone.
     assert!(!app.managed.sessions.contains_key(&linked));
+    assert!(!app.managed.history.contains_key(&linked));
     assert!(!app.agents_working());
     assert!(matches!(
         commands.try_recv(),

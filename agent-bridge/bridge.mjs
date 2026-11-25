@@ -6,7 +6,12 @@
 //
 // Commands:
 //   { type: "models", harness }                          -> { type: "models", models, default_model }
-//   { type: "start", harness, model, thinking, thinking_summaries }  starts a conversation in the working directory
+//   { type: "start", harness, model, thinking, thinking_summaries, resume? }
+//                                                        starts a conversation in the working directory,
+//                                                        or continues the harness's saved one `resume`
+//                                                        -> { type: "session", id } once the harness names it
+//   { type: "history", harness, resume }                -> { type: "history", items }: the saved conversation's
+//                                                        prompts, replies and tool calls, to show it again
 //   { type: "prompt", text }                             -> text / thinking / tool events, then turn_end
 //   { type: "interrupt" }                                -> the running turn ends as "interrupted"
 //
@@ -19,10 +24,12 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import {
   ClaudeNormalizer,
+  claudeHistory,
   PiNormalizer,
   claudeModels,
   codexEvents,
   codexModels,
+  piHistory,
   piModels,
 } from "./normalize.mjs";
 
@@ -91,7 +98,12 @@ const claude = {
     }
   },
 
-  async start({ model, thinking, thinking_summaries }) {
+  async history(resume) {
+    const { getSessionMessages } = await import("@anthropic-ai/claude-agent-sdk");
+    return claudeHistory(await getSessionMessages(resume, { dir: WORKTREE }));
+  },
+
+  async start({ model, thinking, thinking_summaries, resume }) {
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
     const input = new MessageQueue();
     const normalizer = new ClaudeNormalizer();
@@ -115,6 +127,8 @@ const claude = {
     };
     if (model) options.model = model;
     if (thinking) options.effort = thinking;
+    // Claude reloads the conversation from its own session file.
+    if (resume) options.resume = resume;
     // Current models think adaptively but return no thinking text unless asked
     // for a summary. Older ones reject the setting, so the app says which is which.
     if (thinking_summaries) options.thinking = { type: "adaptive", display: "summarized" };
@@ -199,7 +213,17 @@ const codex = {
     return codexModels(JSON.parse(stdout));
   },
 
-  async start({ model, thinking }) {
+  // The Codex SDK resumes a thread but can't read its earlier items back.
+  async history() {
+    return [
+      {
+        type: "notice",
+        text: "Codex can't show the earlier messages of a resumed thread, but the agent remembers them.",
+      },
+    ];
+  },
+
+  async start({ model, thinking, resume }) {
     const { Codex } = await import("@openai/codex-sdk");
     const options = {
       workingDirectory: WORKTREE,
@@ -211,7 +235,8 @@ const codex = {
     };
     if (model) options.model = model;
     if (thinking) options.modelReasoningEffort = thinking;
-    const thread = new Codex().startThread(options);
+    // A new thread reports its id with its first turn (`thread.started`).
+    const thread = resume ? new Codex().resumeThread(resume, options) : new Codex().startThread(options);
     let abort = null;
     return {
       async prompt(text) {
@@ -269,10 +294,15 @@ const pi = {
     });
   },
 
-  async start({ model, thinking }) {
+  async history(resume) {
+    return piHistory((await piSession(resume)).buildSessionContext().messages);
+  },
+
+  async start({ model, thinking, resume }) {
     const { ModelRuntime, createAgentSession } = await import("@earendil-works/pi-coding-agent");
     const modelRuntime = await ModelRuntime.create();
     const options = { cwd: WORKTREE, modelRuntime };
+    if (resume) options.sessionManager = await piSession(resume);
     if (model) {
       const [provider, ...id] = model.split("/");
       const found = modelRuntime.getModel(provider, id.join("/"));
@@ -281,6 +311,7 @@ const pi = {
     }
     if (thinking) options.thinkingLevel = thinking;
     const { session } = await createAgentSession(options);
+    emit({ type: "session", id: session.sessionId });
     const normalizer = new PiNormalizer();
     session.subscribe((event) => {
       for (const normalized of normalizer.events(event)) emit(normalized);
@@ -313,6 +344,14 @@ const pi = {
   },
 };
 
+/** Opens Pi's saved conversation `id`. Pi keeps one file per conversation; find this worktree's by its id. */
+async function piSession(id) {
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const saved = (await SessionManager.list(WORKTREE)).find((info) => info.id === id);
+  if (!saved) throw new Error("Pi has no saved conversation to resume. Start a new chat.");
+  return SessionManager.open(saved.path);
+}
+
 const HARNESSES = { claude, codex, pi };
 
 // --- Command loop ----------------------------------------------------------
@@ -325,6 +364,12 @@ async function handle(command) {
       const harness = HARNESSES[command.harness];
       if (!harness) throw new Error(`Unknown harness: ${command.harness}`);
       emit({ type: "models", ...(await harness.models()) });
+      return;
+    }
+    case "history": {
+      const harness = HARNESSES[command.harness];
+      if (!harness) throw new Error(`Unknown harness: ${command.harness}`);
+      emit({ type: "history", items: await harness.history(command.resume) });
       return;
     }
     case "start": {
