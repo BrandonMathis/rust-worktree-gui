@@ -1,6 +1,6 @@
 # Agent instructions — Worktree Browser
 
-A macOS desktop app in Rust (iced 0.14) for working across Git worktrees. Bookmark repositories, browse their worktrees, and open an embedded terminal (Alacritty's engine via `iced_term`) attached to a persistent per-worktree tmux session. See `README.md` for user-facing behavior.
+A macOS desktop app in Rust (iced 0.14) for working across Git worktrees. Bookmark repositories, browse their worktrees, and open an embedded terminal (Alacritty's engine via `iced_term`) attached to a persistent per-worktree tmux session. See `docs/frd/` for the required behavior.
 
 The project is also a learning exercise: the owner is a React developer learning Rust. Prefer idiomatic, conventional Rust. Explain non-obvious Rust or iced patterns briefly in comments or replies, rather than writing clever code.
 
