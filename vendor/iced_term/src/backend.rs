@@ -791,6 +791,64 @@ mod tests {
         assert!(receiver.try_recv().is_none());
     }
 
+    /// A backend running `script` in `/bin/sh`, in a real PTY.
+    fn running(script: &str) -> Backend {
+        let (proxy, _receiver) = event_channel();
+        let settings = BackendSettings {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), script.into()],
+            ..BackendSettings::default()
+        };
+        Backend::new(0, proxy, settings).expect("start the PTY")
+    }
+
+    /// Waits until the visible screen contains `text`, syncing as the UI
+    /// does after a wakeup.
+    fn wait_for_screen(backend: &mut Backend, text: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            backend.sync();
+            let screen: String = backend
+                .renderable_content()
+                .grid
+                .display_iter()
+                .map(|cell| cell.c)
+                .collect();
+            if screen.contains(text) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{text:?} never appeared on screen"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn typed_keys_reach_the_program_directly_when_the_view_is_at_the_bottom() {
+        let mut backend = running("exec cat");
+        assert!(backend.write_input(b"typed"));
+        // The PTY echoes what the program received.
+        wait_for_screen(&mut backend, "typed");
+    }
+
+    #[test]
+    fn typed_keys_go_through_the_app_while_the_view_is_scrolled_back() {
+        let mut backend = running("seq 1 200; exec cat");
+        wait_for_screen(&mut backend, "200");
+        backend.term.lock().scroll_display(Scroll::Delta(5));
+        backend.sync();
+
+        // Writing directly would leave the view scrolled back.
+        assert!(!backend.write_input(b"typed"));
+        // The app's path scrolls to the bottom as it writes.
+        backend.handle(Command::Write(b"typed".to_vec()));
+        backend.sync();
+        assert_eq!(backend.renderable_content().grid.display_offset(), 0);
+        wait_for_screen(&mut backend, "typed");
+    }
+
     /// The URL a ⌘-click at `column` of a one-line terminal showing `line`
     /// would open.
     fn url_clicked_at(line: &str, column: usize) -> Option<String> {
