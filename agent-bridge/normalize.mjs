@@ -164,8 +164,11 @@ export function codexEvents(event) {
       return [{ type: "turn_end", status: "done" }];
     case "turn.failed":
       return [{ type: "turn_end", status: "failed", error: event.error?.message ?? "The turn failed." }];
+    // A top-level error doesn't end the turn by itself: Codex also reports
+    // retries this way ("Reconnecting… 1/5"), and a fatal one is followed by
+    // `turn.failed`. The bridge ends the turn when the stream does.
     case "error":
-      return [{ type: "turn_end", status: "failed", error: event.message }];
+      return [{ type: "notice", text: event.message }];
     default:
       return [];
   }

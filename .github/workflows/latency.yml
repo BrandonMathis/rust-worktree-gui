@@ -1,14 +1,18 @@
-# Keystroke latency (NFR-11) on every pull request: how long a key press takes
-# to change the pixels on screen, for the PR against its base branch.
+# Keystroke latency (NFR-11) on pull requests that change the app: how long a
+# key press typed into the embedded terminal takes to change the pixels on
+# screen, for the PR against its base branch.
 #
 # scripts/latency.rb builds both revisions in release mode with
-# `--features perf` (src/perf/), which drive the real app headlessly: typing
-# and moving the cursor in the embedded terminal, scrolling and repainting it,
-# and typing into the Rename field. Base and head take turns on this one
-# runner, so differences between runners cancel out. The check fails when head
-# is significantly slower: more than 15% or 3σ, in every round (the rules are
-# in scripts/latency.rb and tested by scripts/test/latency_test.rb). The
-# report is in the job summary; the raw samples are a workflow artifact.
+# `--features perf` (src/perf/), which drive the real app headlessly. CI runs
+# only `type_character` (typing at the terminal prompt); the other terminal
+# scenarios stay available locally with `--only`. Base and head take turns on
+# this one runner, so differences between runners cancel out. The check fails
+# when head is significantly slower: more than 15% or 3σ, in every round (the
+# rules are in scripts/latency.rb and tested by scripts/test/latency_test.rb).
+# The report is in the job summary; the raw samples are a workflow artifact.
+#
+# PRs that touch none of the paths below (docs, other workflows, capture
+# scripts) skip the check; they can't change what is measured.
 #
 # A pull request checks out its merge commit, so HEAD^1 is the base branch.
 # A manual run compares the branch with its previous commit. A base from
@@ -17,6 +21,15 @@ name: Latency
 
 on:
   pull_request:
+    paths:
+      - "src/**"
+      - "vendor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".tool-versions"
+      - "scripts/latency.rb"
+      - "scripts/test/latency_test.rb"
+      - ".github/workflows/latency.yml"
   workflow_dispatch:
 
 concurrency:
@@ -63,10 +76,12 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: latency
+      # In release mode, so the dependencies it compiles are the ones the
+      # measurement build below reuses, instead of a second full build.
       - name: Test the harness
-        run: cargo test --locked --features perf 'perf::'
+        run: cargo test --release --locked --features perf 'perf::'
       - name: Measure head against base
-        run: ruby scripts/latency.rb --base-ref HEAD^1
+        run: ruby scripts/latency.rb --base-ref HEAD^1 --only type_character
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

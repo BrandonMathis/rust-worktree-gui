@@ -1,6 +1,6 @@
 # Agent instructions — Worktree Browser
 
-A macOS desktop app in Rust (iced 0.14) for working across Git worktrees. Bookmark repositories, browse their worktrees, and open an embedded terminal (Alacritty's engine via `iced_term`) attached to a persistent per-worktree tmux session, or a *managed* worktree: an agent pane that drives Claude, Codex or Pi. See `README.md` for user-facing behavior.
+A macOS desktop app in Rust (iced 0.14) for working across Git worktrees. Bookmark repositories, browse their worktrees, and open an embedded terminal (Alacritty's engine via `iced_term`) attached to a persistent per-worktree tmux session, or a *managed* worktree: an agent pane that drives Claude, Codex or Pi. See `docs/frd/` for the required behavior.
 
 The project is also a learning exercise: the owner is a React developer learning Rust. Prefer idiomatic, conventional Rust. Explain non-obvious Rust or iced patterns briefly in comments or replies, rather than writing clever code.
 
@@ -30,7 +30,7 @@ cargo test --locked --features perf perf::           # tests for the latency har
 
 ## Keystroke latency
 
-`.github/workflows/latency.yml` measures how long a key press takes to change the pixels on screen, on every PR, and fails the check when the PR is significantly slower than its base (NFR-11). The harness is built into the app behind `--features perf` (`src/perf/`, off in normal builds): it runs the real `App` headlessly, presses keys through iced's widget tree, and renders every frame offscreen until its pixels change. The terminal runs a tiny line editor (`src/perf/echo.rs`) instead of tmux, so the number is the app's own pipeline. `scripts/latency.rb` builds base and head and runs them in turns on one machine, which is the only fair comparison. The rules (15% or 3σ, only when significant and seen in every round) are in that script.
+`.github/workflows/latency.yml` measures how long a key typed into the terminal takes to change the pixels on screen, on every PR that changes `src/`, `vendor/`, Cargo files or the harness, and fails the check when the PR is significantly slower than its base (NFR-11). The harness is built into the app behind `--features perf` (`src/perf/`, off in normal builds): it runs the real `App` headlessly, presses keys through iced's widget tree, and renders every frame offscreen until its pixels change. The terminal runs a tiny line editor (`src/perf/echo.rs`) instead of tmux, so the number is the app's own pipeline. `scripts/latency.rb` builds base and head and runs them in turns on one machine, which is the only fair comparison. The rules (15% or 3σ, only when significant and seen in every round) are in that script.
 
 Run it before and after a change that touches input handling, `App::view`/`update`, the terminal widget or drawing: `ruby scripts/latency.rb` (or `--base-ref <rev>`; `--from target/latency` re-reads a run). Absolute numbers depend on the machine and its load; only the comparison means anything. When you add a keyboard-driven feature, add a scenario in `src/perf/scenarios.rs`. Results land in `target/latency/`; never commit them.
 

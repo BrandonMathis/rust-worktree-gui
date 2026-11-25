@@ -10,7 +10,7 @@
 //! at a time, each after the turn before it ends.
 
 use super::widgets::single_line;
-use super::{App, Message, Project, background};
+use super::{App, Message, Project, ProjectId, background};
 use crate::agent::{
     self, Command, Event, Harness, Item, Model, Models, ToolStatus, Transcript, TurnStatus,
 };
@@ -267,6 +267,36 @@ impl App {
     /// Whether any agent is in the middle of a turn (quitting would stop it).
     pub(super) fn agents_working(&self) -> bool {
         self.managed.sessions.values().any(Session::working)
+    }
+
+    /// Whether an agent in one of `id`'s worktrees is in the middle of a turn
+    /// (removing the project would stop it).
+    pub(super) fn project_agents_working(&self, id: ProjectId) -> bool {
+        self.project_agent_paths(id).iter().any(|path| {
+            self.managed
+                .sessions
+                .get(path)
+                .is_some_and(Session::working)
+        })
+    }
+
+    /// Ends the conversations in `id`'s worktrees, as for [`Self::stop_agents`].
+    /// Called when the project is removed: once its rows are gone, nothing
+    /// could show or stop those agents.
+    pub(super) fn stop_project_agents(&mut self, id: ProjectId) {
+        for path in self.project_agent_paths(id) {
+            self.managed.sessions.remove(&path);
+        }
+    }
+
+    /// The worktrees of project `id` that can have an agent session: the ones
+    /// Git lists, and the ones marked managed (in case Git no longer lists them).
+    fn project_agent_paths(&self, id: ProjectId) -> Vec<PathBuf> {
+        let Some(project) = self.projects.iter().find(|project| project.id == id) else {
+            return Vec::new();
+        };
+        let listed = project.inventory.iter().flatten().map(|tree| &tree.path);
+        listed.chain(&project.managed).cloned().collect()
     }
 
     /// Ends every conversation before the app quits, and returns whether any
@@ -594,15 +624,25 @@ impl App {
         else {
             return; // From a conversation that was replaced by a new chat.
         };
-        // A bridge-level error ends the turn like a failed one.
+        // A bridge-level error ends the running turn like a failed one. With
+        // no turn running there is nothing to end, so it is only noted.
         let update = match update {
-            Update::Event(Event::Error { message }) => Update::Event(Event::TurnEnd {
-                status: TurnStatus::Failed,
-                error: Some(message),
-            }),
+            Update::Event(Event::Error { message }) if session.working() => {
+                Update::Event(Event::TurnEnd {
+                    status: TurnStatus::Failed,
+                    error: Some(message),
+                })
+            }
+            Update::Event(Event::Error { message }) => {
+                Update::Event(Event::Notice { text: message })
+            }
             other => other,
         };
         match update {
+            // A turn ends once. A second end for the same turn (a harness
+            // that reports an error and then the failed turn) must not pop
+            // another queued follow-up while the first one is running.
+            Update::Event(Event::TurnEnd { .. }) if !session.working() => {}
             Update::Event(Event::TurnEnd { status, error }) => {
                 session.transcript.end_turn(status, error);
                 session.unseen |= !viewing;

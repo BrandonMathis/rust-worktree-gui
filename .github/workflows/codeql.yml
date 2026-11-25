@@ -1,0 +1,51 @@
+# CodeQL: static analysis of the Rust code for security bugs (SECURITY.md).
+#
+# It has its own workflow, rather than a job in security.yml, so pull requests
+# that change no Rust code (docs, other workflows, scripts) can skip it with a
+# path filter. Pushes to main and the daily run always scan everything, and
+# the daily run picks up new queries.
+#
+# `build-mode: none` reads the source without compiling it, so it runs on
+# Linux: no macOS runner to wait for. Code behind `cfg(target_os = "macos")`
+# (the AppKit calls in backdrop.rs and quit.rs) is not analyzed there.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/**"
+      - "vendor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/codeql.yml"
+  schedule:
+    - cron: "23 14 * * *" # daily 14:23 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          category: /language:rust
