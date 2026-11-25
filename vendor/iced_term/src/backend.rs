@@ -483,6 +483,20 @@ impl Backend {
         self.notifier.notify(input);
     }
 
+    /// Patch: sends typed bytes straight to the PTY from the widget, without
+    /// a `Command` round trip through the app. Typing changes nothing on
+    /// screen until the program echoes it, and that arrives as a `Wakeup`, so
+    /// this needs no grid sync or redraw. Returns `false` (writing nothing)
+    /// when the view is scrolled back: then typing must also scroll to the
+    /// bottom, which changes the screen, so the caller sends `Command::Write`.
+    pub fn write_input(&self, input: &[u8]) -> bool {
+        if self.last_content.grid.display_offset() != 0 {
+            return false;
+        }
+        self.write(input.to_vec());
+        true
+    }
+
     fn scroll(
         &mut self,
         terminal: &mut Term<EventProxy>,

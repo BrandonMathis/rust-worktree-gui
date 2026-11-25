@@ -92,6 +92,18 @@ pub struct Harness {
     queued: Vec<Message>,
 }
 
+/// What became of a key sent to the widgets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Delivery {
+    /// No widget handled it.
+    Ignored,
+    /// A widget handled it without changing anything iced draws, so iced
+    /// draws no frame for it.
+    Captured,
+    /// It changed the app, or a widget asked for a redraw: iced draws a frame.
+    Redraw,
+}
+
 type Ui<'a> = UserInterface<'a, Message, iced::Theme, iced::Renderer>;
 
 /// Builds the widget tree for `app`'s current state. A free function, not a
@@ -200,12 +212,13 @@ impl Harness {
     /// Presses `key` and returns how long the screen took to change.
     fn press(&mut self, key: Keystroke) -> Result<Phases, String> {
         let mut phases = Phases::default();
-        if !self.deliver(&[key.event()], &mut phases)? {
+        let delivery = self.deliver(&[key.event()], &mut phases)?;
+        if delivery == Delivery::Ignored {
             return Err(format!(
                 "{key:?} reached no widget (is the terminal or field focused?)"
             ));
         }
-        if self.render(&mut phases) {
+        if delivery == Delivery::Redraw && self.render(&mut phases) {
             return Ok(phases);
         }
         let deadline = Instant::now() + KEY_TIMEOUT;
@@ -222,9 +235,11 @@ impl Harness {
     }
 
     /// Sends `events` to the widgets, as iced does with window input, and
-    /// gives `App::update` every message they publish. Returns whether there
-    /// were any (iced redraws only then).
-    fn deliver(&mut self, events: &[iced::Event], phases: &mut Phases) -> Result<bool, String> {
+    /// gives `App::update` every message they publish. Says whether iced
+    /// would draw a frame now: only when a widget published a message or
+    /// asked for a redraw. A widget can handle a key with neither (the
+    /// terminal writes typed bytes straight to its PTY).
+    fn deliver(&mut self, events: &[iced::Event], phases: &mut Phases) -> Result<Delivery, String> {
         // iced keeps the tree it built for the last frame; rebuilding it from
         // the cache here gives the same tree, so it isn't timed.
         let mut ui = build(
@@ -235,7 +250,7 @@ impl Harness {
         );
         let start = Instant::now();
         let mut messages = Vec::new();
-        let _ = ui.update(
+        let (state, statuses) = ui.update(
             events,
             mouse::Cursor::Unavailable,
             &mut self.renderer,
@@ -244,9 +259,24 @@ impl Harness {
         );
         self.cache = ui.into_cache();
         phases.update += start.elapsed();
-        let published = !messages.is_empty();
+        // iced_winit's rule after window events: redraw for published
+        // messages, an outdated tree, or a widget's redraw request.
+        let redraw = !messages.is_empty()
+            || match state {
+                user_interface::State::Outdated => true,
+                user_interface::State::Updated { redraw_request, .. } => {
+                    redraw_request != window::RedrawRequest::Wait
+                }
+            };
+        let captured = statuses.contains(&iced::event::Status::Captured);
         self.apply(messages, phases)?;
-        Ok(published)
+        Ok(if redraw {
+            Delivery::Redraw
+        } else if captured {
+            Delivery::Captured
+        } else {
+            Delivery::Ignored
+        })
     }
 
     fn apply_terminal_output(
