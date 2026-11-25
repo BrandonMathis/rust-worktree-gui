@@ -61,7 +61,7 @@ Elm-style iced app: `App` state → `Message` → `App::update` returns a `Task`
 ## Rules
 
 - **Never commit code review documents.** Review findings, audits and refactor wish lists stay out of the repository (in the PR, an issue or an untracked file). Record the outcome as FRD rows and tests instead.
-- **Git is the source of truth.** Never cache the worktree inventory, and don't depend on third-party worktree metadata. Persist only user preferences, never derived state.
+- **Git is the source of truth.** Never cache the worktree inventory, and don't depend on third-party worktree metadata. Persist only user preferences, never derived state. The one exception is `conversations.json`: the harness's id for each agent conversation a managed worktree can resume, never its messages, which stay in the harness's own session files and are read back through the bridge.
 - **Never destroy user state.** The app must not remove or prune worktrees, delete files, kill tmux sessions, or write to the user's tmux or Alacritty config. Removing a project removes only the bookmark.
 - **tmux session names must stay stable.** Changing how they're derived orphans users' running sessions, so it needs a migration (see `src/tmux.rs`).
 - **Subprocesses use argument vectors**, never shell strings. Keep paths as `PathBuf`/`OsString` end to end; they may contain spaces, newlines or non-UTF-8 bytes. Strip Git environment overrides (`GIT_DIR` etc.) when running git.

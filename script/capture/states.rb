@@ -139,6 +139,16 @@ module CaptureStates
       project: 0, worktree: "acme-api-audit-log",
       prompt: "Add an audit log entry for every API request, with tests.",
       settle: 5
+    },
+    {
+      name: "09-earlier-chats",
+      title: "Managed worktree — New Chat keeps the last conversation under Earlier chats, to resume",
+      size: "1120x720",
+      covers: %w[src/app/managed.rs],
+      project: 0, worktree: "acme-api-audit-log",
+      open: "earlier-chats",
+      prompt: "Add an audit log entry for every API request, with tests.",
+      settle: 4
     }
   ].freeze
 

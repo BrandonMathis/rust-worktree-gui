@@ -48,7 +48,7 @@ struct WorktreeName {
 
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
-enum StoredPath {
+pub(crate) enum StoredPath {
     Text(String),
     Bytes(Vec<u8>),
 }

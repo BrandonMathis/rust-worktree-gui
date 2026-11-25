@@ -56,7 +56,8 @@ const MIN_NODE: (u32, u32) = (22, 19);
 const NODE_TIMEOUT: Duration = Duration::from_secs(20);
 /// `npm ci` downloads several hundred megabytes of SDK binaries.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(20 * 60);
-const MODELS_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long a one-off request (the model list, a saved conversation) may take.
+const ASK_TIMEOUT: Duration = Duration::from_secs(90);
 /// How long a bridge gets to stop its agent after its stdin closes. Tests
 /// use a short one so the suite stays fast.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(if cfg!(test) { 2000 } else { 5000 });
@@ -328,33 +329,86 @@ async fn send(stdin: &mut ChildStdin, command: &Command) -> std::io::Result<()> 
     stdin.flush().await
 }
 
-/// Asks `harness` which models the signed-in user can use.
-pub async fn list_models(bridge: Bridge, harness: Harness) -> Result<Models, String> {
+/// Runs `command` in a short-lived bridge in `cwd` and returns the first
+/// event `answer` accepts. An error the bridge reports, or its exit, ends
+/// the wait early. `doing` names the request for the timeout message.
+async fn ask<T>(
+    bridge: &Bridge,
+    cwd: &Path,
+    command: Command,
+    doing: &str,
+    answer: impl Fn(Event) -> Option<T>,
+) -> Result<T, String> {
     let ask = async {
-        // Run outside any repository so no project settings change the list.
-        let cwd = directories::BaseDirs::new()
-            .map_or_else(|| bridge.dir.clone(), |dirs| dirs.home_dir().to_path_buf());
-        let mut process = bridge.spawn(&cwd, &[])?;
-        send(&mut process.stdin, &Command::Models { harness })
+        let mut process = bridge.spawn(cwd, &[])?;
+        send(&mut process.stdin, &command)
             .await
-            .map_err(|err| format!("Could not ask {} for its models: {err}", harness.name()))?;
+            .map_err(|err| err.to_string())?;
         while let Ok(Some(line)) = process.lines.next_line().await {
             match Event::parse(&line) {
-                Some(Event::Models(models)) => return Ok(models),
                 Some(Event::Error { message }) => return Err(message),
-                _ => {}
+                Some(event) => {
+                    if let Some(found) = answer(event) {
+                        return Ok(found);
+                    }
+                }
+                None => {}
             }
         }
         Err(process.last_words().await)
     };
-    match tokio::time::timeout(MODELS_TIMEOUT, ask).await {
+    match tokio::time::timeout(ASK_TIMEOUT, ask).await {
         Ok(result) => result,
-        Err(_) => Err(format!(
-            "{} did not list its models in time.",
-            harness.name()
-        )),
+        Err(_) => Err(format!("It did not {doing} in time.")),
     }
+}
+
+/// Asks `harness` which models the signed-in user can use.
+pub async fn list_models(bridge: Bridge, harness: Harness) -> Result<Models, String> {
+    // Run outside any repository so no project settings change the list.
+    let cwd = directories::BaseDirs::new()
+        .map_or_else(|| bridge.dir.clone(), |dirs| dirs.home_dir().to_path_buf());
+    let command = Command::Models { harness };
+    ask(
+        &bridge,
+        &cwd,
+        command,
+        "list its models",
+        |event| match event {
+            Event::Models(models) => Some(models),
+            _ => None,
+        },
+    )
+    .await
     .map_err(|err| format!("Could not load {} models: {err}", harness.name()))
+}
+
+/// Reads back the conversation `resume` that `harness` saved for `worktree`,
+/// as the events that rebuild its transcript.
+pub async fn load_history(
+    bridge: Bridge,
+    worktree: PathBuf,
+    harness: Harness,
+    resume: String,
+) -> Result<Vec<Event>, String> {
+    let command = Command::History { harness, resume };
+    ask(
+        &bridge,
+        &worktree,
+        command,
+        "read the conversation",
+        |event| match event {
+            Event::History { items } => Some(items),
+            _ => None,
+        },
+    )
+    .await
+    .map_err(|err| {
+        format!(
+            "Could not load the earlier {} conversation: {err}",
+            harness.name()
+        )
+    })
 }
 
 /// Aborts a spawned task when dropped. A plain `JoinHandle` detaches instead.
@@ -514,6 +568,7 @@ done
                 model: None,
                 thinking: None,
                 thinking_summaries: false,
+                resume: None,
             },
             Command::Prompt { text: "go".into() },
         ] {

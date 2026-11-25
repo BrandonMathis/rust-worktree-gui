@@ -10,6 +10,9 @@
 //   { type: "tool", id, name, input?, status, output? }  status: running | done | failed
 //   { type: "notice", text }                  something the user should know (a denied tool, an error)
 //   { type: "turn_end", status, error? }      status: done | interrupted | failed
+//   { type: "session", id }                   the harness's own id for the conversation, to resume it later
+//   { type: "history", items }                a saved conversation, as `user` items ({ type: "user", text })
+//                                             and the content events above, oldest first
 
 /** Longest string the app is sent for one tool input field or tool output. */
 export const CLIP = 2000;
@@ -52,12 +55,24 @@ export function resultText(content) {
 export class ClaudeNormalizer {
   #message = "message";
   #streamed = new Set();
+  #session = null;
   /** Set by the bridge while an interrupt is in flight, to label the turn's end. */
   interrupting = false;
 
   events(message) {
     // Subagent activity is summarized by its parent `Agent` tool call.
     if (message.parent_tool_use_id) return [];
+    // Every message names its session. Report the id when it first appears,
+    // or when it changes (a resumed session may get a new one).
+    const session = [];
+    if (message.session_id && message.session_id !== this.#session) {
+      this.#session = message.session_id;
+      session.push({ type: "session", id: message.session_id });
+    }
+    return [...session, ...this.#events(message)];
+  }
+
+  #events(message) {
     switch (message.type) {
       case "stream_event":
         return this.#stream(message.event);
@@ -156,6 +171,8 @@ const CODEX_STATUS = { in_progress: "running", completed: "done", failed: "faile
 /** Converts one `ThreadEvent` from `thread.runStreamed()`. */
 export function codexEvents(event) {
   switch (event.type) {
+    case "thread.started":
+      return [{ type: "session", id: event.thread_id }];
     case "item.started":
     case "item.updated":
     case "item.completed":
@@ -259,6 +276,90 @@ export class PiNormalizer {
         return [];
     }
   }
+}
+
+// --- Saved conversations ---------------------------------------------------
+
+/** What Claude writes in place of a reply when the user stopped the turn. */
+const CLAUDE_INTERRUPTED = /^\[Request interrupted by user/;
+
+/**
+ * Converts the messages of a saved Claude session (`getSessionMessages()`)
+ * into transcript items: prompts, replies, thinking and tool calls.
+ */
+export function claudeHistory(messages) {
+  const items = [];
+  for (const { type, uuid, message, parent_tool_use_id } of messages) {
+    // Subagent activity is summarized by its parent `Agent` tool call, as when live.
+    if (parent_tool_use_id) continue;
+    const blocks = typeof message?.content === "string" ? [{ type: "text", text: message.content }] : (message?.content ?? []);
+    if (type === "user") {
+      const prompt = [];
+      for (const block of blocks) {
+        if (block.type === "tool_result") {
+          items.push({
+            type: "tool",
+            id: block.tool_use_id,
+            status: block.is_error ? "failed" : "done",
+            output: clip(resultText(block.content)),
+          });
+        } else if (block.type === "text" && CLAUDE_INTERRUPTED.test(block.text)) {
+          items.push({ type: "notice", text: "Stopped." });
+        } else if (block.type === "text" && block.text) {
+          prompt.push(block.text);
+        }
+      }
+      if (prompt.length > 0) items.push({ type: "user", text: prompt.join("\n\n") });
+    } else if (type === "assistant") {
+      for (const [index, block] of blocks.entries()) {
+        const id = `${uuid}:${index}`;
+        if (block.type === "text" && block.text) items.push({ type: "text", id, text: block.text });
+        if (block.type === "thinking" && block.thinking) items.push({ type: "thinking", id, text: block.thinking });
+        if (block.type === "tool_use") {
+          items.push({ type: "tool", id: block.id, name: block.name, input: clip(block.input ?? {}), status: "running" });
+        }
+      }
+    }
+  }
+  return items;
+}
+
+/** Converts the messages of a saved Pi session (its `buildSessionContext()`). */
+export function piHistory(messages) {
+  const items = [];
+  for (const [number, message] of messages.entries()) {
+    const blocks = typeof message.content === "string" ? [{ type: "text", text: message.content }] : (message.content ?? []);
+    if (message.role === "user") {
+      const text = blocks
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n\n");
+      if (text) items.push({ type: "user", text });
+    } else if (message.role === "assistant") {
+      for (const [index, block] of blocks.entries()) {
+        const id = `m${number}:${index}`;
+        if (block.type === "text" && block.text) items.push({ type: "text", id, text: block.text });
+        if (block.type === "thinking" && block.thinking && !block.redacted) {
+          items.push({ type: "thinking", id, text: block.thinking });
+        }
+        if (block.type === "toolCall") {
+          items.push({ type: "tool", id: block.id, name: block.name, input: clip(block.arguments ?? {}), status: "running" });
+        }
+      }
+      if (message.stopReason === "error" && message.errorMessage) {
+        items.push({ type: "notice", text: clip(message.errorMessage, 600) });
+      }
+    } else if (message.role === "toolResult") {
+      items.push({
+        type: "tool",
+        id: message.toolCallId,
+        name: message.toolName,
+        status: message.isError ? "failed" : "done",
+        output: clip(resultText(message.content)),
+      });
+    }
+  }
+  return items;
 }
 
 // --- Model lists -----------------------------------------------------------

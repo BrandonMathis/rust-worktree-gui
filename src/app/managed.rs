@@ -15,6 +15,7 @@ use crate::agent::{
     self, Command, Event, Harness, Item, Model, Models, ToolStatus, Transcript, TurnStatus,
 };
 use crate::agent_bridge::{self, Bridge, Prepared, Update};
+use crate::conversations::{self, SavedChat, SavedWorktree};
 use crate::git::Worktree;
 use crate::style::{self, Button, Panel};
 use crate::theme::Palette;
@@ -40,6 +41,13 @@ pub(super) struct Managed {
     pub(super) models: BTreeMap<Harness, ModelList>,
     /// One conversation per managed worktree, by worktree path.
     pub(super) sessions: BTreeMap<PathBuf, Session>,
+    /// Earlier conversations per worktree, oldest first: the ones **New Chat**
+    /// set aside. Their agents are stopped; resuming one starts its harness
+    /// again on the conversation the harness saved. Kept while the app runs.
+    pub(super) history: BTreeMap<PathBuf, Vec<Session>>,
+    /// Where the conversations to resume after a restart are saved. `None`
+    /// in tests, and when Application Support can't be found.
+    pub(super) store: Option<conversations::Store>,
     next_session_id: u64,
     next_models_request: u64,
 }
@@ -80,6 +88,23 @@ pub(super) struct Session {
     pub(super) run: Run,
     /// A turn ended while the user was looking elsewhere.
     pub(super) unseen: bool,
+    /// The harness's own id for this conversation, once it reports one. The
+    /// next start resumes it, so the agent remembers what was said.
+    pub(super) resume: Option<String>,
+    /// The saved first prompt of a conversation restored after a restart,
+    /// which names it until its messages are read back.
+    saved_title: Option<String>,
+    pub(super) replay: Replay,
+}
+
+/// Whether a conversation restored after a restart has its earlier messages
+/// back in the transcript. They are read from the harness when it is shown.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Replay {
+    /// Nothing to read back: a conversation that began in this run.
+    Done,
+    Pending,
+    Loading,
 }
 
 /// Where a session's agent process is.
@@ -109,7 +134,79 @@ impl Session {
             queue: VecDeque::new(),
             run: Run::New,
             unseen: false,
+            resume: None,
+            saved_title: None,
+            replay: Replay::Done,
         }
+    }
+
+    /// A conversation saved before the app last quit. Its agent isn't
+    /// running; the next prompt resumes the harness's conversation.
+    fn restored(id: u64, chat: SavedChat) -> Self {
+        Self {
+            harness: chat.harness,
+            model: chat.model,
+            thinking: chat.thinking,
+            run: Run::Ended,
+            resume: Some(chat.resume),
+            saved_title: Some(chat.title),
+            replay: Replay::Pending,
+            ..Self::new(id)
+        }
+    }
+
+    /// What is saved to resume this conversation after a restart. `None`
+    /// until the harness has named it.
+    fn saved(&self) -> Option<SavedChat> {
+        Some(SavedChat {
+            harness: self.harness,
+            resume: self.resume.clone()?,
+            model: self.model.clone(),
+            thinking: self.thinking.clone(),
+            title: self.title().to_owned(),
+        })
+    }
+
+    /// Ends this conversation's agent so the session can be set aside, and
+    /// keeps everything the user wrote: unsent follow-ups go back into the
+    /// prompt field, ready for when the conversation is resumed.
+    fn set_aside(mut self) -> Self {
+        if self.working() {
+            self.transcript.end_turn(TurnStatus::Interrupted, None);
+        }
+        // Dropping the sender closes the bridge's input, which stops its agent.
+        if matches!(self.run, Run::Live { .. }) {
+            self.run = Run::Ended;
+        }
+        self.unseen = false;
+        self.return_queue();
+        self
+    }
+
+    /// Moves queued follow-ups (then anything typed) into the prompt field.
+    fn return_queue(&mut self) {
+        if self.queue.is_empty() {
+            return;
+        }
+        let mut draft: Vec<String> = self.queue.drain(..).collect();
+        let typed = self.editor.text();
+        if !typed.trim().is_empty() {
+            draft.push(typed.trim_end().to_owned());
+        }
+        self.editor = text_editor::Content::with_text(&draft.join("\n\n"));
+    }
+
+    /// The conversation's first prompt, which names it in the list of earlier chats.
+    pub(super) fn title(&self) -> &str {
+        self.transcript
+            .items()
+            .iter()
+            .find_map(|item| match item {
+                Item::User(prompt) => Some(prompt.as_str()),
+                _ => None,
+            })
+            .or(self.saved_title.as_deref())
+            .unwrap_or("Untitled chat")
     }
 
     pub(super) fn working(&self) -> bool {
@@ -135,6 +232,7 @@ impl Session {
                 .or_else(|| self.model.clone()),
             thinking: self.thinking.clone(),
             thinking_summaries: chosen.is_some_and(|model| !model.thinking.is_empty()),
+            resume: self.resume.clone(),
         }
     }
 
@@ -197,10 +295,15 @@ pub enum ManagedMessage {
     /// Remove a queued follow-up.
     Unqueue(usize),
     NewChat,
+    /// Go back to one of the selected worktree's earlier chats, by its index
+    /// in [`Managed::history`].
+    Resume(usize),
     /// Expand or collapse a thinking or tool row.
     Toggle(usize),
     Link(String),
     LinkOpened(Result<(), String>),
+    /// A restored conversation's earlier messages: worktree, session id, events.
+    HistoryLoaded(PathBuf, u64, Result<Vec<Event>, String>),
     /// Something from a session's bridge: worktree, session id, update.
     Bridge(PathBuf, u64, Update),
 }
@@ -286,7 +389,113 @@ impl App {
     pub(super) fn stop_project_agents(&mut self, id: ProjectId) {
         for path in self.project_agent_paths(id) {
             self.managed.sessions.remove(&path);
+            self.managed.history.remove(&path);
         }
+        self.save_chats();
+    }
+
+    /// Brings back the conversations saved before the app last quit, for the
+    /// worktrees that are still managed. Each one's messages are read back
+    /// from its harness when the worktree is shown.
+    pub(super) fn restore_chats(&mut self, saved: BTreeMap<PathBuf, SavedWorktree>) {
+        let managed: Vec<PathBuf> = self
+            .projects
+            .iter()
+            .flat_map(|project| project.managed.iter().cloned())
+            .collect();
+        for (path, saved) in saved {
+            if !managed.contains(&path) {
+                continue;
+            }
+            let mut restore = |chat| {
+                self.managed.next_session_id += 1;
+                Session::restored(self.managed.next_session_id, chat)
+            };
+            let earlier: Vec<Session> = saved.earlier.into_iter().map(&mut restore).collect();
+            if let Some(chat) = saved.current {
+                let current = restore(chat);
+                self.managed.sessions.insert(path.clone(), current);
+            }
+            if !earlier.is_empty() {
+                self.managed.history.insert(path, earlier);
+            }
+        }
+    }
+
+    /// Saves which conversations each worktree can resume, so they come back
+    /// after a restart. Called whenever that changes.
+    fn save_chats(&mut self) {
+        let Some(store) = &self.managed.store else {
+            return;
+        };
+        let mut worktrees: BTreeMap<PathBuf, SavedWorktree> = BTreeMap::new();
+        for (path, session) in &self.managed.sessions {
+            worktrees.entry(path.clone()).or_default().current = session.saved();
+        }
+        for (path, history) in &self.managed.history {
+            worktrees.entry(path.clone()).or_default().earlier =
+                history.iter().filter_map(Session::saved).collect();
+        }
+        if let Err(error) = store.save(&worktrees) {
+            self.notice = Some(error);
+        }
+    }
+
+    /// Reads back the selected conversation's earlier messages from its
+    /// harness, if it was restored after a restart and they aren't loaded.
+    fn load_replay(&mut self) -> Task<Message> {
+        let BridgeState::Ready(bridge) = &self.managed.bridge else {
+            return Task::none();
+        };
+        let bridge = bridge.clone();
+        let Some(path) = self.selected_managed().map(|(_, tree)| tree.path.clone()) else {
+            return Task::none();
+        };
+        let Some(session) = self
+            .managed
+            .sessions
+            .get_mut(&path)
+            .filter(|session| session.replay == Replay::Pending)
+        else {
+            return Task::none();
+        };
+        let Some(resume) = session.resume.clone() else {
+            session.replay = Replay::Done;
+            return Task::none();
+        };
+        session.replay = Replay::Loading;
+        let id = session.id;
+        Task::perform(
+            agent_bridge::load_history(bridge, path.clone(), session.harness, resume),
+            move |result| Message::Managed(ManagedMessage::HistoryLoaded(path.clone(), id, result)),
+        )
+    }
+
+    /// Puts a restored conversation's earlier messages back above anything
+    /// said since. The session may have been set aside under Earlier chats
+    /// while they loaded.
+    fn history_loaded(&mut self, path: &Path, id: u64, result: Result<Vec<Event>, String>) {
+        let current = self.managed.sessions.get_mut(path);
+        let session = match current.filter(|session| session.id == id) {
+            Some(session) => session,
+            None => {
+                let earlier = self.managed.history.get_mut(path);
+                match earlier.and_then(|history| history.iter_mut().find(|s| s.id == id)) {
+                    Some(session) => session,
+                    None => return,
+                }
+            }
+        };
+        if session.replay != Replay::Loading {
+            return;
+        }
+        session.replay = Replay::Done;
+        let mut earlier = Transcript::default();
+        match result {
+            Ok(events) => events.into_iter().for_each(|event| earlier.apply(event)),
+            Err(error) => earlier.push_notice(error),
+        }
+        session.transcript.prepend(earlier);
     }
 
     /// The worktrees of project `id` that can have an agent session: the ones
@@ -327,7 +536,7 @@ impl App {
         let harness = session.harness;
         let load = match self.managed.bridge {
             BridgeState::Unknown | BridgeState::Failed(_) => self.check_bridge(),
-            BridgeState::Ready(_) => self.load_models(harness),
+            BridgeState::Ready(_) => Task::batch([self.load_models(harness), self.load_replay()]),
             _ => Task::none(),
         };
         Task::batch([load, operation::focus(PROMPT_INPUT)])
@@ -363,9 +572,10 @@ impl App {
     }
 
     /// Loads the models of the harness the selected session uses.
+    /// Also reads back its earlier messages, if it was restored.
     fn load_selected_models(&mut self) -> Task<Message> {
         match self.selected_session().map(|session| session.harness) {
-            Some(harness) => self.load_models(harness),
+            Some(harness) => Task::batch([self.load_models(harness), self.load_replay()]),
             None => Task::none(),
         }
     }
@@ -423,7 +633,15 @@ impl App {
                     && !session.started()
                 {
                     session.editor = text_editor::Content::with_text(&prompt);
-                    return self.submit_prompt();
+                    let sent = self.submit_prompt();
+                    if matches!(
+                        crate::capture::open(),
+                        Some(crate::capture::Open::EarlierChats)
+                    ) {
+                        let new_chat = self.managed_message(ManagedMessage::NewChat);
+                        return Task::batch([sent, new_chat]);
+                    }
+                    return sent;
                 }
                 Task::none()
             }
@@ -503,18 +721,30 @@ impl App {
             ManagedMessage::NewChat => {
                 self.managed.next_session_id += 1;
                 let id = self.managed.next_session_id;
-                if let Some(session) = self.selected_session() {
-                    // Replacing the session drops its bridge handle, which
-                    // stops the agent. The same harness and model stay picked.
-                    let fresh = Session {
-                        harness: session.harness,
-                        model: session.model.clone(),
-                        thinking: session.thinking.clone(),
-                        ..Session::new(id)
-                    };
-                    *session = fresh;
-                }
+                let Some(path) = self.selected_managed().map(|(_, tree)| tree.path.clone()) else {
+                    return Task::none();
+                };
+                let Some(session) = self.managed.sessions.get_mut(&path) else {
+                    return Task::none();
+                };
+                // The same harness and model stay picked.
+                let fresh = Session {
+                    harness: session.harness,
+                    model: session.model.clone(),
+                    thinking: session.thinking.clone(),
+                    ..Session::new(id)
+                };
+                // `std::mem::replace` swaps the new session in and hands back
+                // the old one, which goes into the worktree's history.
+                let old = std::mem::replace(session, fresh);
+                self.set_aside(path, old);
+                self.save_chats();
                 operation::focus(PROMPT_INPUT)
+            }
+            ManagedMessage::Resume(index) => self.resume_chat(index),
+            ManagedMessage::HistoryLoaded(path, id, result) => {
+                self.history_loaded(&path, id, result);
+                Task::none()
             }
             ManagedMessage::Toggle(index) => {
                 if let Some(session) = self.selected_session() {
@@ -537,6 +767,63 @@ impl App {
                 Task::none()
             }
         }
+    }
+
+    /// Keeps a conversation that is being replaced in its worktree's history,
+    /// with its agent stopped. One that never started has nothing to keep.
+    fn set_aside(&mut self, path: PathBuf, session: Session) {
+        if session.started() {
+            let history = self.managed.history.entry(path).or_default();
+            history.push(session.set_aside());
+        }
+    }
+
+    /// Makes earlier chat `index` the selected worktree's conversation again,
+    /// and sets the current one aside. The agent starts with the next prompt,
+    /// resuming the harness's saved conversation.
+    fn resume_chat(&mut self, index: usize) -> Task<Message> {
+        let Some(path) = self.selected_managed().map(|(_, tree)| tree.path.clone()) else {
+            return Task::none();
+        };
+        // `Vec::remove` panics on a bad index, so check it first (a click
+        // can't name a chat that isn't listed, but the lint rules are strict).
+        let Some(mut earlier) = self
+            .managed
+            .history
+            .get_mut(&path)
+            .filter(|history| index < history.len())
+            .map(|history| history.remove(index))
+        else {
+            return Task::none();
+        };
+        // A new id, so late events from its old bridge stay ignored.
+        self.managed.next_session_id += 1;
+        earlier.id = self.managed.next_session_id;
+        let harness = earlier.harness;
+        if let Some(current) = self.managed.sessions.remove(&path) {
+            if current.started() {
+                self.set_aside(path.clone(), current);
+            } else {
+                // Text typed into a fresh chat's form isn't lost by resuming.
+                let typed = current.editor.text();
+                if !typed.trim().is_empty() {
+                    let kept = earlier.editor.text();
+                    let draft = [kept.trim_end(), typed.trim_end()]
+                        .into_iter()
+                        .filter(|part| !part.trim().is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    earlier.editor = text_editor::Content::with_text(&draft);
+                }
+            }
+        }
+        self.managed.sessions.insert(path, earlier);
+        self.save_chats();
+        Task::batch([
+            self.load_models(harness),
+            self.load_replay(),
+            operation::focus(PROMPT_INPUT),
+        ])
     }
 
     /// Sends the composer's text: straight to an idle agent, into the queue
@@ -574,7 +861,9 @@ impl App {
                 Task::none()
             }
             Run::New | Run::Ended => {
-                if matches!(session.run, Run::Ended) {
+                // With the harness's id, the restarted agent picks the
+                // conversation up again; without one it starts afresh.
+                if matches!(session.run, Run::Ended) && session.resume.is_none() {
                     session.transcript.push_notice(
                         "The agent was restarted, so it does not remember the conversation above."
                             .into(),
@@ -622,7 +911,19 @@ impl App {
             .get_mut(path)
             .filter(|session| session.id == id)
         else {
-            return; // From a conversation that was replaced by a new chat.
+            // From a conversation that was replaced by a new chat. Only its
+            // id still matters: it may arrive after the chat was set aside.
+            if let Update::Event(Event::Session { id: resume }) = update
+                && let Some(earlier) = self
+                    .managed
+                    .history
+                    .get_mut(path)
+                    .and_then(|history| history.iter_mut().find(|earlier| earlier.id == id))
+            {
+                earlier.resume = Some(resume);
+                self.save_chats();
+            }
+            return;
         };
         // A bridge-level error ends the running turn like a failed one. With
         // no turn running there is nothing to end, so it is only noted.
@@ -661,6 +962,12 @@ impl App {
                     None => *working = false,
                 }
             }
+            Update::Event(Event::Session { id: resume }) => {
+                if session.resume.as_ref() != Some(&resume) {
+                    session.resume = Some(resume);
+                    self.save_chats();
+                }
+            }
             Update::Event(event) => session.transcript.apply(event),
             Update::Exited(reason) => {
                 if session.working() {
@@ -673,14 +980,7 @@ impl App {
                 session.unseen |= !viewing;
                 session.run = Run::Ended;
                 // Hand unsent follow-ups back rather than dropping them.
-                if !session.queue.is_empty() {
-                    let mut draft: Vec<String> = session.queue.drain(..).collect();
-                    let typed = session.editor.text();
-                    if !typed.trim().is_empty() {
-                        draft.push(typed.trim_end().to_owned());
-                    }
-                    session.editor = text_editor::Content::with_text(&draft.join("\n\n"));
-                }
+                session.return_queue();
             }
         }
     }
@@ -698,7 +998,7 @@ impl App {
         let body = if session.started() {
             self.conversation(session, tree)
         } else {
-            container(self.first_prompt(session))
+            container(self.first_prompt(session, &tree.path))
                 .center(Fill)
                 .padding(12)
                 .into()
@@ -767,7 +1067,7 @@ impl App {
     }
 
     /// The centered form a new managed worktree opens with.
-    fn first_prompt<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
+    fn first_prompt<'a>(&'a self, session: &'a Session, path: &Path) -> Element<'a, Message> {
         let p = self.palette();
         let note = |message: &'a str| text(message).size(13).color(p.muted());
         let action = |label: &'static str| {
@@ -819,9 +1119,50 @@ impl App {
                 form.push(row(harnesses).spacing(6))
                     .push(self.model_pickers(session, p))
                     .push(self.composer(session, "Describe a task…", 96.0))
+                    .push(self.earlier_chats(path, p))
             }
         };
         form.into()
+    }
+
+    /// The worktree's earlier chats, newest first, each a button that resumes it.
+    fn earlier_chats<'a>(&'a self, path: &Path, p: Palette) -> Element<'a, Message> {
+        let Some(history) = self
+            .managed
+            .history
+            .get(path)
+            .filter(|history| !history.is_empty())
+        else {
+            return Space::new().into();
+        };
+        let mut list = column![text("Earlier chats").size(12).color(p.muted())].spacing(4);
+        for (index, earlier) in history.iter().enumerate().rev() {
+            let model = self
+                .models(earlier.harness)
+                .and_then(|models| models.get(earlier.model.as_deref()?))
+                .map(|model| model.name.as_str())
+                .or(earlier.model.as_deref())
+                .unwrap_or(earlier.harness.name());
+            list = list.push(
+                button(
+                    row![
+                        harness_icon(earlier.harness, 13, p.purple),
+                        single_line(earlier.title().replace('\n', " "), 12),
+                        text(model)
+                            .size(11)
+                            .color(p.muted())
+                            .wrapping(text::Wrapping::None),
+                    ]
+                    .spacing(6)
+                    .align_y(Center),
+                )
+                .width(Fill)
+                .padding([4, 8])
+                .style(style::button(p, Button::Secondary))
+                .on_press(Message::Managed(ManagedMessage::Resume(index))),
+            );
+        }
+        list.into()
     }
 
     /// The model and thinking drop-downs for the session's harness.
@@ -946,6 +1287,19 @@ impl App {
         let working = session.working();
         let items = session.transcript.items();
         let mut list = column![].spacing(8).width(Fill);
+        // A conversation restored after a restart, before its messages are back.
+        if session.replay != Replay::Done {
+            list = list.push(
+                row![
+                    icons::connecting(12, p.purple),
+                    text(format!("Loading “{}”…", session.title()))
+                        .size(12)
+                        .color(p.muted())
+                ]
+                .spacing(5)
+                .align_y(Center),
+            );
+        }
         for (index, item) in items.iter().enumerate() {
             // Only the newest row can still be in progress.
             let active = working && index + 1 == items.len();

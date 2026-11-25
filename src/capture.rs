@@ -13,8 +13,9 @@
 //!   if it is a managed one, as soon as its harness's models have loaded. The
 //!   screenshot then shows a conversation instead of the empty composer.
 //! - `WORKTREE_BROWSER_CAPTURE_OPEN`: a view to show at startup. Only
-//!   `settings` (the Settings window) and `unavailable` (the first project's
-//!   unavailable worktrees) exist so far; add a variant here when a
+//!   `settings` (the Settings window), `unavailable` (the first project's
+//!   unavailable worktrees) and `earlier-chats` (a managed worktree's New Chat
+//!   form, with the `PROMPT` conversation set aside under Earlier chats) exist so far; add a variant here when a
 //!   screenshot state needs another view.
 
 use std::env;
@@ -54,12 +55,16 @@ pub enum Open {
     Settings,
     /// The first project's unavailable worktrees modal.
     Unavailable,
+    /// After sending the scripted prompt, start a new chat, so the form lists
+    /// that conversation under Earlier chats.
+    EarlierChats,
 }
 
 pub fn open() -> Option<Open> {
     match env::var("WORKTREE_BROWSER_CAPTURE_OPEN").ok()?.as_str() {
         "settings" => Some(Open::Settings),
         "unavailable" => Some(Open::Unavailable),
+        "earlier-chats" => Some(Open::EarlierChats),
         // The capture script saves stderr next to each PNG, so a typo in a
         // state shows up there instead of as a silently wrong screenshot.
         other => {

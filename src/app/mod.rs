@@ -290,6 +290,17 @@ impl App {
             Err(error) if app.notice.is_none() => app.notice = Some(error),
             Err(_) => {}
         }
+        // Managed worktrees pick up the conversations they had when the app
+        // quit. An unreadable file keeps its store unset, so it isn't
+        // overwritten with nothing before the user can look at it.
+        match crate::conversations::Store::open().and_then(|store| Ok((store.load()?, store))) {
+            Ok((saved, store)) => {
+                app.restore_chats(saved);
+                app.managed.store = Some(store);
+            }
+            Err(error) if app.notice.is_none() => app.notice = Some(error),
+            Err(_) => {}
+        }
         #[cfg(feature = "capture")]
         if let Some(target) = crate::capture::target() {
             app.open_after_load(target);
@@ -304,7 +315,8 @@ impl App {
             Some(crate::capture::Open::Unavailable) => {
                 app.unavailable_list = app.projects.first().map(|project| project.id);
             }
-            None => {}
+            // Handled once the scripted prompt is sent (`managed.rs`).
+            Some(crate::capture::Open::EarlierChats) | None => {}
         }
         (app, task)
     }
