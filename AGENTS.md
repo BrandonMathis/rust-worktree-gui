@@ -127,6 +127,10 @@ Read `SECURITY.md` before changing `.github/dependabot.yml`, `deny.toml` or a wo
 
 ## Collaboration
 
+**Start every session from the latest `main`.** Unless the request names another branch, assume the work is meant for the newest `main`. Before you change anything, run `git fetch origin main` and create your branch from `origin/main` (`git switch -c <branch> origin/main`). Don't build on a stale local `main` or on whatever branch the worktree happens to have checked out. If the checkout has uncommitted changes you didn't make, leave them alone and ask.
+
+**Finish work with a pull request.** Once format, clippy and tests pass, commit, push the branch, and open a PR with `gh pr create`. You don't need to ask first. Skip the PR only when something blocks it: the work needs more input, a decision or guidance from the owner, or it can't be made to pass the checks. When you skip it, say why. Requests that change nothing (questions, research, reviews) and releases, which commit straight to `main`, don't get one.
+
 Another agent (Pi) may be editing this repository at the same time. Before broad edits, check `git status` and file modification times. Don't revert changes you didn't make, and avoid large refactors of a file someone else is actively changing.
 
 Write pull request descriptions as `.agents/skills/pr-description/SKILL.md` describes: a "What changed" section and a "Why" section, with no test plans or lists of tests added.
