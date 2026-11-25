@@ -855,9 +855,23 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                     return;
                 }
 
-                self.handle_keyboard_event(state, clipboard, keyboard_event)
-                    .into_iter()
-                    .collect()
+                match self.handle_keyboard_event(
+                    state,
+                    clipboard,
+                    keyboard_event,
+                ) {
+                    // Patch: typed bytes go straight to the PTY. Upstream
+                    // published them as a message, so every key ran the app's
+                    // update, rebuilt the view and drew a frame that showed
+                    // nothing new, before the echo could be drawn.
+                    Some(Command::Write(bytes))
+                        if self.term.backend.write_input(&bytes) =>
+                    {
+                        shell.capture_event();
+                        return;
+                    },
+                    command => command.into_iter().collect(),
+                }
             },
             _ => Vec::new(),
         };
