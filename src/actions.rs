@@ -48,6 +48,36 @@ impl DirectoryAction {
     }
 }
 
+/// Whether `url` is a plain HTTPS link: the only kind the app hands to the OS.
+/// A link in an agent's reply is untrusted text, so anything else (`file:`,
+/// custom schemes that launch apps, embedded credentials) is refused.
+fn is_https_link(url: &str) -> bool {
+    url.strip_prefix("https://").is_some_and(|rest| {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        !host.is_empty()
+            && !host.contains('@')
+            && !url.chars().any(|c| c.is_control() || c.is_whitespace())
+    })
+}
+
+/// Opens an HTTPS link in the default browser.
+pub fn open_https(url: &str) -> Result<(), String> {
+    if !is_https_link(url) {
+        return Err(format!("Only https:// links can be opened: {url}"));
+    }
+    let mut open = runner::command(Path::new("/usr/bin/open"));
+    open.arg(url);
+    let output = runner::run(&mut open, OPEN_TIMEOUT)
+        .map_err(|err| format!("Could not open {url}: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not open {url}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 impl std::fmt::Display for DirectoryAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -83,6 +113,24 @@ mod tests {
         for action in [DirectoryAction::Finder, DirectoryAction::VsCode] {
             let error = action.run(missing.clone(), None).unwrap_err();
             assert!(error.starts_with("Directory not available"), "{error}");
+        }
+    }
+
+    #[test]
+    fn only_plain_https_links_are_opened() {
+        assert!(is_https_link("https://example.com/docs?q=1#top"));
+        for url in [
+            "http://example.com",
+            "file:///etc/passwd",
+            "vscode://open?x",
+            "https://",
+            "https://user:pw@example.com/",
+            "https://example.com/a b",
+            "https://example.com/\nfile:///x",
+            "-a Calculator",
+        ] {
+            assert!(!is_https_link(url), "{url}");
+            assert!(open_https(url).is_err(), "{url}");
         }
     }
 

@@ -17,6 +17,7 @@
 //! | `terminal_pane` | The embedded terminal's connection state |
 //! | `unavailable` | The list of a project's unavailable worktrees |
 //! | `creation` | The New Project / New Worktree form (a nested component) |
+//! | `managed` | Managed worktrees: the agent pane and its bridge sessions |
 //! | `sidebar` | Sidebar state and view |
 //! | `project_list` | Sidebar project drag-and-drop |
 //! | `view` | The window layout, workspace and worktree header |
@@ -29,6 +30,7 @@
 
 mod auto_refresh;
 mod creation;
+mod managed;
 #[cfg(feature = "perf")]
 mod perf;
 mod project_list;
@@ -59,11 +61,13 @@ use crate::{
     watch::Fingerprint,
 };
 use iced::{Subscription, Task};
+use managed::Managed;
+pub use managed::ManagedMessage;
 use projects::RefreshKind;
 use sessions::Session;
 use sidebar::SidebarPreview;
 pub use sidebar::SidebarZone;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use terminal_pane::ConsoleState;
 
@@ -73,7 +77,7 @@ use {
     crate::{git, pull_request},
     sidebar::WorktreeIcon,
     std::path::Path,
-    widgets::menu_actions,
+    widgets::{MenuTarget, menu_actions},
 };
 
 const WORKTREE_NAME_INPUT: &str = "worktree-name-input";
@@ -121,12 +125,16 @@ pub struct App {
     settings: Option<settings::Draft>,
     /// The project whose unavailable worktrees are listed in a modal, if any.
     unavailable_list: Option<ProjectId>,
+    /// Managed worktrees: the agent bridge, model lists and conversations.
+    managed: Managed,
 }
 
 struct Project {
     id: ProjectId,
     checkout: Checkout,
     worktree_names: BTreeMap<PathBuf, String>,
+    /// Worktrees that show a managed agent instead of a terminal.
+    managed: BTreeSet<PathBuf>,
     expanded: bool,
     /// Lists every worktree instead of the first `WORKTREE_LIMIT` (not saved).
     show_all_worktrees: bool,
@@ -223,12 +231,18 @@ pub enum Message {
     DismissNotice,
     OpenSettings,
     Settings(settings::Message),
+    /// Something in a managed worktree's agent pane.
+    Managed(ManagedMessage),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     Directory(DirectoryAction),
     RenameWorktree,
+    /// Show a managed agent in this worktree instead of a terminal.
+    UseAgent,
+    /// Show the terminal in this managed worktree again.
+    UseTerminal,
     NewWorktree,
     ReplaceAnchor,
     RemoveProject,
@@ -241,6 +255,8 @@ impl std::fmt::Display for MenuAction {
         match self {
             Self::Directory(action) => std::fmt::Display::fmt(action, f),
             Self::RenameWorktree => f.write_str("Rename Worktree"),
+            Self::UseAgent => f.write_str("Use Managed Agent"),
+            Self::UseTerminal => f.write_str("Use Terminal"),
             Self::NewWorktree => f.write_str("New Worktree…"),
             Self::ReplaceAnchor => f.write_str("Replace Anchor…"),
             Self::RemoveProject => f.write_str("Remove Project"),
@@ -338,6 +354,7 @@ impl App {
             theme_store: None,
             settings: None,
             unavailable_list: None,
+            managed: Managed::default(),
         };
         for project in projects {
             app.insert_project(project);

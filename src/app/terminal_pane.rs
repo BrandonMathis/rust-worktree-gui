@@ -55,12 +55,12 @@ impl ConsoleState {
 }
 
 impl App {
-    /// The selected worktree, if it is one that can have a terminal.
+    /// The selected worktree, if it is one that can have a terminal: its
+    /// folder exists and it isn't managed (those show an agent pane instead).
     fn selected_worktree(&self) -> Option<(&Project, &Worktree)> {
         let (project, selection) = self.selected()?;
         let tree = project.worktree(selection.worktree.as_deref()?)?;
-        tree.unavailable_reason()
-            .is_none()
+        (tree.unavailable_reason().is_none() && !project.is_managed(&tree.path))
             .then_some((project, tree))
     }
 
@@ -85,8 +85,12 @@ impl App {
     /// Connects the terminal to the selected worktree's tmux session. If a
     /// terminal is already running, it focuses it (same worktree) or switches
     /// its client (another worktree). Does nothing while connecting or
-    /// switching, or for a project overview or an unavailable worktree.
+    /// switching, or for a project overview or an unavailable worktree. A
+    /// managed worktree opens its agent pane instead.
     pub(super) fn connect(&mut self) -> Task<Message> {
+        if self.selected_managed().is_some() {
+            return self.open_managed();
+        }
         if matches!(
             self.console,
             ConsoleState::Connecting(_) | ConsoleState::Switching { .. }

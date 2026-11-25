@@ -40,6 +40,9 @@ module CaptureStates
   # - open: a view from src/capture.rs to show at startup, such as "settings".
   # - layout: lays out the worktree's tmux window, given the tmux helper and
   #   the first pane. Omit it for states that show no terminal.
+  # - prompt: for a managed worktree, a prompt to send at startup, so the
+  #   screenshot shows a conversation (answered by script/capture/agent-bridge).
+  # - settle: seconds to wait before capturing, when the default is too short.
   STATES = [
     {
       name: "01-workspace",
@@ -119,6 +122,23 @@ module CaptureStates
       size: "1120x720",
       covers: %w[src/app/unavailable.rs],
       open: "unavailable"
+    },
+    {
+      name: "07-managed",
+      title: "Managed worktree — choose a harness, model and thinking level, then prompt",
+      size: "1120x720",
+      covers: %w[src/app/managed.rs src/agent.rs],
+      project: 0, worktree: "acme-api-audit-log",
+      settle: 4
+    },
+    {
+      name: "08-managed-chat",
+      title: "Managed worktree — a turn with collapsed thinking and tool calls",
+      size: "1120x720",
+      covers: %w[src/app/managed.rs src/agent.rs],
+      project: 0, worktree: "acme-api-audit-log",
+      prompt: "Add an audit log entry for every API request, with tests.",
+      settle: 5
     }
   ].freeze
 

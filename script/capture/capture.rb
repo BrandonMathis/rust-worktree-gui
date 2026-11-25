@@ -17,6 +17,9 @@
 # a scratch server. Your real bookmarks, tmux sessions and dotfiles are never
 # read or changed. A window does briefly appear on screen for each state, and
 # the terminal running this script needs the Screen Recording permission.
+# Managed worktrees run script/capture/agent-bridge, a scripted stand-in for
+# the agent bridge, so no harness, login or network is involved (Node.js is
+# still needed for those states).
 
 require "fileutils"
 require "json"
@@ -166,6 +169,10 @@ class Fixtures
 
     git(repo, "worktree", "add", "-q", File.join(root, "acme-api-release"), "release/2.4")
 
+    # A managed worktree: it shows an agent prompt instead of a terminal.
+    audit = File.join(root, "acme-api-audit-log")
+    git(repo, "worktree", "add", "-q", "-b", "feature/audit-log", audit)
+
     # Worktrees whose folders were deleted outside Git are unavailable: the
     # sidebar leaves them out and 06-unavailable lists them.
     %w[spike/grpc spike/graphql chore/old-ci].each do |branch|
@@ -174,7 +181,8 @@ class Fixtures
       FileUtils.rm_rf(dir)
     end
 
-    @projects << { root: path("acme-api"), names: { path("acme-api-session-tokens") => "Session tokens" } }
+    @projects << { root: path("acme-api"), names: { path("acme-api-session-tokens") => "Session tokens" },
+                   managed: [path("acme-api-audit-log")] }
   end
 
   def build_design_system
@@ -212,7 +220,8 @@ class Fixtures
       {
         anchor: project[:root],
         common_dir: File.join(project[:root], ".git"),
-        worktree_names: project[:names].map { |p, name| { path: p, name: name } }
+        worktree_names: project[:names].map { |p, name| { path: p, name: name } },
+        managed_worktrees: project.fetch(:managed, [])
       }
     end
     dir = File.join(home, "Library/Application Support/Worktree Browser")
@@ -322,6 +331,7 @@ def capture_state(state, fixtures, app_env, bin, tmux, out)
     env["WORKTREE_BROWSER_CAPTURE_WORKTREE"] = fixtures.path(state[:worktree])
   end
   env["WORKTREE_BROWSER_CAPTURE_OPEN"] = state[:open] if state[:open]
+  env["WORKTREE_BROWSER_CAPTURE_PROMPT"] = state[:prompt] if state[:prompt]
   pid = Process.spawn(env, bin, out: File::NULL, err: File.join(out, "#{state[:name]}.log"))
   begin
     id = window_id(pid)
@@ -331,7 +341,8 @@ def capture_state(state, fixtures, app_env, bin, tmux, out)
       state[:layout].call(tmux, pane)
       tmux.redraw_clients if REFRESH
     end
-    sleep SETTLE # Let the app draw the last tmux frame.
+    # Let the app draw the last tmux frame (or a state's own, longer wait).
+    sleep state.fetch(:settle, SETTLE)
     file = File.join(out, "#{state[:name]}.png")
     run("screencapture", "-x", "-o", "-l#{id}", file)
     log "  wrote #{file}"
@@ -373,6 +384,8 @@ app_env = {
   "PATH" => "#{File.join(HERE, 'bin')}:#{ENV.fetch('PATH', '')}",
   "LANG" => "en_US.UTF-8",
   "WORKTREE_BROWSER_TMUX" => wrapper,
+  # Managed worktrees talk to a scripted stand-in, not to a real harness.
+  "WORKTREE_BROWSER_AGENT_BRIDGE" => File.join(HERE, "agent-bridge"),
   # Keep the user's own config and any outer tmux or Git state out of the app.
   "XDG_CONFIG_HOME" => nil, "TMUX" => nil, "TMUX_PANE" => nil,
   "GIT_DIR" => nil, "GIT_WORK_TREE" => nil, "GIT_CONFIG_NOSYSTEM" => "1"

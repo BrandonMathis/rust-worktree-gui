@@ -47,6 +47,28 @@ updates:
     commit-message:
       prefix: "deps"
 
+  # The agent bridge's harness SDKs (see SECURITY.md, "Agent SDKs"). Same
+  # policy as Cargo: minor and major releases after a cooldown; patch
+  # releases only as security updates.
+  - package-ecosystem: npm
+    directory: /agent-bridge
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:17"
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+    cooldown:
+      default-days: 14
+      semver-major-days: 30
+      semver-minor-days: 14
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+
   # Workflow actions are pinned to full commit SHAs (a moved tag can't change
   # what runs). Dependabot bumps the SHA and its `# vX.Y.Z` comment together.
   - package-ecosystem: github-actions

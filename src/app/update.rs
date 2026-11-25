@@ -10,6 +10,9 @@ use crate::{confirmation, git, settings};
 use iced::widget::operation;
 use iced::{Task, window};
 
+/// How long quitting waits for running agent bridges to stop their agents.
+const AGENT_SHUTDOWN: std::time::Duration = std::time::Duration::from_millis(600);
+
 impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
@@ -145,6 +148,7 @@ impl App {
                 Task::none()
             }
             Message::Settings(message) => self.settings(message),
+            Message::Managed(message) => self.managed_message(message),
         }
     }
 
@@ -153,26 +157,33 @@ impl App {
             return Task::none();
         }
         self.pending_confirmation = Some(Confirmation::Quit);
-        confirmation::show(
-            id,
-            "Quit Worktree Browser?",
-            "Your tmux sessions will keep running.".into(),
-            "Quit",
-        )
-        .map(|confirmed| Message::ConfirmationAnswered(Confirmation::Quit, confirmed))
+        // tmux sessions outlive the app; a managed agent's turn does not.
+        let detail = if self.agents_working() {
+            "Agents that are working will be stopped. Your tmux sessions will keep running."
+        } else {
+            "Your tmux sessions will keep running."
+        };
+        confirmation::show(id, "Quit Worktree Browser?", detail.into(), "Quit")
+            .map(|confirmed| Message::ConfirmationAnswered(Confirmation::Quit, confirmed))
     }
 
     fn request_project_removal(&mut self, id: ProjectId, name: String) -> Task<Message> {
         let action = Confirmation::RemoveProject(id);
         self.pending_confirmation = Some(action);
+        let detail = if self.project_agents_working(id) {
+            format!(
+                "Remove “{name}” from Worktree Browser? Its working agents will be stopped. Repository files, worktrees, and tmux sessions will be left unchanged."
+            )
+        } else {
+            format!(
+                "Remove “{name}” from Worktree Browser? Repository files, worktrees, and tmux sessions will be left unchanged."
+            )
+        };
         window::latest()
             .then(move |id| match id {
-                Some(id) => confirmation::show(
-                    id,
-                    "Remove Project?",
-                    format!("Remove “{name}” from Worktree Browser? Repository files, worktrees, and tmux sessions will be left unchanged."),
-                    "Remove Project",
-                ),
+                Some(id) => {
+                    confirmation::show(id, "Remove Project?", detail.clone(), "Remove Project")
+                }
                 None => Task::done(false),
             })
             .map(move |confirmed| Message::ConfirmationAnswered(action, confirmed))
@@ -185,7 +196,15 @@ impl App {
         self.pending_confirmation = None;
         if confirmed {
             match action {
-                Confirmation::Quit => return iced::exit(),
+                Confirmation::Quit => {
+                    if self.stop_agents() {
+                        // Give the bridges a moment to stop their agents;
+                        // exiting at once would only kill the bridges.
+                        return Task::future(async { tokio::time::sleep(AGENT_SHUTDOWN).await })
+                            .then(|()| iced::exit());
+                    }
+                    return iced::exit();
+                }
                 Confirmation::RemoveProject(id) => {
                     if let Err(error) = self.remove_bookmark(id) {
                         self.notice = Some(error);
@@ -251,6 +270,13 @@ impl App {
                 }
                 Task::none()
             }
+            MenuAction::UseAgent | MenuAction::UseTerminal => {
+                let Some((_, Some(tree))) = self.resolve_action_target(&target) else {
+                    return Task::none();
+                };
+                let path = tree.path.clone();
+                self.switch_workspace(target, &path, action == MenuAction::UseAgent)
+            }
             MenuAction::NewWorktree | MenuAction::ReplaceAnchor | MenuAction::RemoveProject => {
                 if !self.can_start_creation() {
                     return Task::none();
@@ -287,6 +313,28 @@ impl App {
                 background(move || action.run(root, repo), Message::ActionFinished)
             }
         }
+    }
+
+    /// Switches a worktree between the terminal and a managed agent. Nothing
+    /// is stopped: its tmux session and its agent conversation both keep
+    /// running, and switching back shows them again.
+    fn switch_workspace(
+        &mut self,
+        target: Selection,
+        path: &std::path::Path,
+        managed: bool,
+    ) -> Task<Message> {
+        if let Err(error) = self.set_managed(target.project, path, managed) {
+            self.notice = Some(error);
+            return Task::none();
+        }
+        if self.selection.as_ref() != Some(&target) {
+            return Task::none();
+        }
+        // The selected worktree changed kind: swap the pane it shows.
+        self.leave_session();
+        self.keep_or_detach_terminal();
+        self.connect()
     }
 
     fn save_worktree_name(&mut self) -> Task<Message> {

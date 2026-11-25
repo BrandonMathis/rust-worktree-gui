@@ -37,6 +37,7 @@ impl Project {
         ProjectBookmark {
             checkout: self.checkout.clone(),
             worktree_names: self.worktree_names.clone(),
+            managed: self.managed.clone(),
         }
     }
 
@@ -116,6 +117,7 @@ impl App {
             id,
             checkout: bookmark.checkout,
             worktree_names: bookmark.worktree_names,
+            managed: bookmark.managed,
             expanded: false,
             show_all_worktrees: false,
             refresh_id: None,
@@ -221,6 +223,39 @@ impl App {
         Ok(())
     }
 
+    /// Marks a worktree as managed (an agent pane) or not (a terminal), and
+    /// saves that with the project's bookmark.
+    pub(super) fn set_managed(
+        &mut self,
+        id: ProjectId,
+        path: &Path,
+        managed: bool,
+    ) -> Result<(), String> {
+        let Some(project) = self.projects.iter().find(|p| p.id == id) else {
+            return Err("The project is no longer bookmarked.".into());
+        };
+        let mut updated = project.bookmark();
+        let changed = if managed {
+            updated.managed.insert(path.to_path_buf())
+        } else {
+            updated.managed.remove(path)
+        };
+        if !changed {
+            return Ok(());
+        }
+        self.save(self.projects.iter().map(|p| {
+            if p.id == id {
+                updated.clone()
+            } else {
+                p.bookmark()
+            }
+        }))?;
+        if let Some(project) = self.projects.iter_mut().find(|p| p.id == id) {
+            project.managed = updated.managed;
+        }
+        Ok(())
+    }
+
     pub(super) fn bookmark(
         &mut self,
         mode: PickMode,
@@ -317,6 +352,8 @@ impl App {
                 .filter(|p| p.id != id)
                 .map(Project::bookmark),
         )?;
+        // Before the project goes: its worktrees decide which agents to stop.
+        self.stop_project_agents(id);
         self.projects.retain(|p| p.id != id);
         if self.unavailable_list == Some(id) {
             self.unavailable_list = None;

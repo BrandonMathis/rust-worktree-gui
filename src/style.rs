@@ -8,7 +8,7 @@
 
 use crate::theme::Palette;
 use iced::widget::button as btn;
-use iced::widget::{container, pick_list, slider, text_input};
+use iced::widget::{container, markdown, pick_list, slider, text_editor, text_input};
 use iced::{Background, Border, Color, Gradient, Theme, gradient, theme};
 
 /// Container surfaces.
@@ -274,6 +274,41 @@ pub fn brightness(p: Palette, color: Color) -> impl Fn(&Theme, slider::Status) -
         style.handle.border_color = p.background;
         style.handle.border_width = 2.0;
         style
+    }
+}
+
+/// The prompt editor in a managed worktree.
+pub fn editor(p: Palette) -> impl Fn(&Theme, text_editor::Status) -> text_editor::Style {
+    move |theme, status| text_editor::Style {
+        background: p.background.into(),
+        border: border(
+            if matches!(status, text_editor::Status::Focused { .. }) {
+                p.purple
+            } else {
+                p.edge()
+            },
+            1.0,
+        ),
+        placeholder: p.muted(),
+        value: p.foreground,
+        ..text_editor::default(theme, status)
+    }
+}
+
+/// How an agent's Markdown reply is drawn. `font` is the app's font (the
+/// user's terminal font), which iced's Markdown widget doesn't pick up itself.
+pub fn markdown_style(p: Palette, font: iced::Font) -> markdown::Style {
+    markdown::Style {
+        font,
+        inline_code_highlight: markdown::Highlight {
+            background: p.selection.scale_alpha(0.6).into(),
+            border: border(Color::TRANSPARENT, 0.0),
+        },
+        inline_code_padding: iced::padding::left(2).right(2),
+        inline_code_color: p.cyan,
+        inline_code_font: font,
+        code_block_font: font,
+        link_color: p.purple,
     }
 }
 
