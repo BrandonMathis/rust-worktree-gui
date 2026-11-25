@@ -29,6 +29,7 @@
 //! be seen here or in a sibling.
 
 mod auto_refresh;
+mod cleanup;
 mod creation;
 mod managed;
 #[cfg(feature = "perf")]
@@ -69,7 +70,7 @@ use sidebar::SidebarPreview;
 pub use sidebar::SidebarZone;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use terminal_pane::ConsoleState;
+use terminal_pane::{Connection, ConsoleState};
 
 // Brought into scope for the tests (`use super::*`), which predate the split.
 #[cfg(test)]
@@ -104,6 +105,8 @@ pub struct App {
     /// The tmux session poll in flight, if any (see `sessions`).
     session_request: Option<u64>,
     next_session_request: u64,
+    /// True while an idle-session cleanup runs, so sweeps never overlap (see `cleanup`).
+    sweeping_sessions: bool,
     next_console_id: u64,
     pr_request_id: u64,
     console: ConsoleState,
@@ -198,6 +201,10 @@ pub enum Message {
     SessionPollTick,
     /// Session activity from a `SessionPollTick` poll, tagged with its request id.
     SessionsPolled(u64, Vec<((ProjectId, PathBuf), SessionActivity)>),
+    /// Time to close idle tmux sessions (startup, then hourly; see `cleanup`).
+    SweepSessions,
+    /// A sweep finished: how many sessions it closed, or why it stopped.
+    SessionsSwept(Result<usize, String>),
     ToggleSidebar,
     SidebarHover(SidebarZone, bool),
     SidebarPreviewExpired(u64),
@@ -221,9 +228,10 @@ pub enum Message {
     OpenPullRequest,
     PullRequestOpened(Result<(), String>),
     Reconnect,
-    Prepared(u64, Result<iced_term::settings::BackendSettings, String>),
-    /// The running terminal's tmux client switched sessions (or failed to).
-    Switched(u64, Result<(), String>),
+    Prepared(u64, Result<Connection, String>),
+    /// The running terminal's tmux client switched sessions (or failed to),
+    /// with a notice if the target's previous session had been closed.
+    Switched(u64, Result<Option<String>, String>),
     Detach,
     Terminal(iced_term::Event),
     WindowOpened(iced::window::Id),
@@ -280,6 +288,8 @@ impl App {
         window_radius: f32,
     ) -> (Self, Task<Message>) {
         let (mut app, task) = Self::from_bookmarks(Store::open());
+        // Only the real app sweeps at startup; tests build the app with `from_bookmarks`.
+        let task = Task::batch([task, Task::done(Message::SweepSessions)]);
         app.window_corners = Corners::window(window_radius);
         match preferences {
             Ok(preferences) => app.terminal_preferences = preferences,
@@ -357,6 +367,7 @@ impl App {
             next_watch_id: 0,
             session_request: None,
             next_session_request: 0,
+            sweeping_sessions: false,
             next_console_id: 0,
             pr_request_id: 0,
             console: ConsoleState::default(),
@@ -447,6 +458,7 @@ impl App {
             resize,
             self.watch_subscription(),
             self.session_subscription(),
+            self.sweep_subscription(),
             iced::event::listen_with(window_events),
         ])
     }

@@ -43,7 +43,7 @@ impl App {
         self.next_console_id += 1;
         let id = self.next_console_id;
         self.console = ConsoleState::Connecting(id);
-        self.update(Message::Prepared(id, Ok(backend)))
+        self.update(Message::Prepared(id, Ok(backend.into())))
     }
 
     /// The terminal's output events: the stream behind its iced subscription.

@@ -40,6 +40,11 @@ impl App {
                 self.sessions_polled(request, reports);
                 Task::none()
             }
+            Message::SweepSessions => self.sweep_sessions(),
+            Message::SessionsSwept(result) => {
+                self.sessions_swept(result);
+                Task::none()
+            }
             Message::ToggleSidebar => self.toggle_sidebar(),
             Message::SidebarHover(zone, entered) => self.sidebar_hover(zone, entered),
             Message::SidebarPreviewExpired(epoch) => self.sidebar_preview_expired(epoch),

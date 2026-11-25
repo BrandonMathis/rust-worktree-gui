@@ -15,6 +15,8 @@ cargo run --locked
 
 To use a specific tmux binary, set `WORKTREE_BROWSER_TMUX` to its absolute path.
 
+To free resources, the app closes idle tmux sessions it created: after 1 day without input if no bookmarked project lists the worktree, otherwise after 7 days. Attached sessions are never closed. When you reopen that worktree, the notice bar explains why its shell is new.
+
 Managed worktrees also need Node.js 22.19 or newer (`brew install node`); set `WORKTREE_BROWSER_NODE` to use a specific one. The first managed worktree asks to install the agent SDKs (about 1 GB, into `~/Library/Application Support/Worktree Browser/agent-bridge`).
 
 ## Develop
