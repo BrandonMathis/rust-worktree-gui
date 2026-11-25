@@ -58,17 +58,27 @@ impl App {
     /// The sidebar and workspace, with the sidebar preview overlay.
     fn main_layout(&self, corners: Corners) -> Element<'_, Message> {
         // Keep the workspace in the same widget slot when toggling the sidebar.
-        let (sidebar, workspace) = if self.sidebar_visible {
+        let (sidebar, handle, workspace) = if self.sidebar_visible {
+            // The 4px gutter between the panels doubles as the resize handle.
+            // The `Element` annotation tells `mouse_area` which renderer to use.
+            let handle: Element<'_, Message> = mouse_area(Space::new().width(4).height(Fill))
+                .interaction(iced::mouse::Interaction::ResizingHorizontally)
+                .on_press(Message::SidebarResizeStarted)
+                .on_double_click(Message::SidebarResizeReset)
+                .into();
             (
                 self.sidebar(corners.left()),
+                handle,
                 self.workspace(corners.right()),
             )
         } else {
-            (Space::new().into(), self.workspace(corners))
+            (
+                Space::new().into(),
+                Space::new().into(),
+                self.workspace(corners),
+            )
         };
-        let workspace = row![sidebar, workspace]
-            .spacing(if self.sidebar_visible { 4 } else { 0 })
-            .height(Fill);
+        let workspace = row![sidebar, handle, workspace].height(Fill);
         let mut workspace = stack![workspace];
         if !self.sidebar_visible && self.sidebar_preview.visible {
             let panel = opaque(

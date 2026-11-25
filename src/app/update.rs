@@ -43,6 +43,19 @@ impl App {
             Message::ToggleSidebar => self.toggle_sidebar(),
             Message::SidebarHover(zone, entered) => self.sidebar_hover(zone, entered),
             Message::SidebarPreviewExpired(epoch) => self.sidebar_preview_expired(epoch),
+            Message::SidebarResizeStarted => {
+                self.sidebar_resize_started();
+                Task::none()
+            }
+            Message::SidebarResized(x) => {
+                self.sidebar_resized(x);
+                Task::none()
+            }
+            Message::SidebarResizeEnded => self.sidebar_resize_ended(),
+            Message::SidebarResizeReset => {
+                self.sidebar_resize_reset();
+                Task::none()
+            }
             Message::Refreshed(refresh_id, result) => self.refreshed(refresh_id, result),
             Message::ToggleProject(id) => {
                 self.toggle_project(id);
