@@ -58,6 +58,45 @@ fn collapsed_sidebar_previews_until_the_pointer_leaves_both_zones() {
 }
 
 #[test]
+fn dragging_the_sidebar_edge_resizes_it_within_limits() {
+    use sidebar::{
+        SIDEBAR_DEFAULT_WIDTH, SIDEBAR_EDGE_OFFSET, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
+    };
+    let (mut app, _) = App::from_bookmarks(Err("test store".into()));
+    assert_eq!(app.sidebar_width, SIDEBAR_DEFAULT_WIDTH);
+
+    // Moving the cursor without pressing the handle changes nothing.
+    let _ = app.update(Message::SidebarResized(300.0));
+    assert_eq!(app.sidebar_width, SIDEBAR_DEFAULT_WIDTH);
+
+    let _ = app.update(Message::SidebarResizeStarted);
+    assert!(app.sidebar_resizing);
+    let _ = app.update(Message::SidebarResized(300.0 + SIDEBAR_EDGE_OFFSET));
+    assert_eq!(app.sidebar_width, 300.0);
+    let _ = app.update(Message::SidebarResized(10_000.0));
+    assert_eq!(app.sidebar_width, SIDEBAR_MAX_WIDTH);
+    let _ = app.update(Message::SidebarResized(0.0));
+    assert_eq!(app.sidebar_width, SIDEBAR_MIN_WIDTH);
+
+    let _ = app.update(Message::SidebarResizeEnded);
+    assert!(!app.sidebar_resizing);
+    let _ = app.update(Message::SidebarResized(300.0));
+    assert_eq!(app.sidebar_width, SIDEBAR_MIN_WIDTH);
+
+    // The width survives hiding and showing the sidebar; double-click resets it.
+    let _ = app.update(Message::ToggleSidebar);
+    let _ = app.update(Message::SidebarResizeStarted);
+    assert!(
+        !app.sidebar_resizing,
+        "a hidden sidebar has no handle to drag"
+    );
+    let _ = app.update(Message::ToggleSidebar);
+    assert_eq!(app.sidebar_width, SIDEBAR_MIN_WIDTH);
+    let _ = app.update(Message::SidebarResizeReset);
+    assert_eq!(app.sidebar_width, SIDEBAR_DEFAULT_WIDTH);
+}
+
+#[test]
 fn collapsing_sidebar_keeps_the_selected_worktree_and_connection() {
     let (_tmp, root) = fixture();
     let checkout = git::discover(&root).unwrap();

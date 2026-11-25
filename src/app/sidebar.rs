@@ -15,6 +15,14 @@ use iced::widget::{
 use iced::{Center, Element, Fill, Task};
 use std::time::Duration;
 
+// Sidebar width limits in logical pixels. The default is the old fixed width.
+pub(super) const SIDEBAR_DEFAULT_WIDTH: f32 = 202.0;
+pub(super) const SIDEBAR_MIN_WIDTH: f32 = 160.0;
+pub(super) const SIDEBAR_MAX_WIDTH: f32 = 480.0;
+/// The window margin left of the sidebar plus half the 4px drag handle, so
+/// the edge tracks the cursor instead of jumping when a drag starts.
+pub(super) const SIDEBAR_EDGE_OFFSET: f32 = style::WINDOW_GAP + 2.0;
+
 #[derive(Clone, Copy, Debug)]
 pub enum SidebarZone {
     Toggle,
@@ -170,6 +178,30 @@ impl App {
             );
         }
         Task::none()
+    }
+
+    /// Starts dragging the sidebar edge. A hidden sidebar has no handle.
+    pub(super) fn sidebar_resize_started(&mut self) {
+        self.sidebar_resizing = self.sidebar_visible;
+    }
+
+    /// Follows the cursor (window x coordinate) while a drag is in progress.
+    pub(super) fn sidebar_resized(&mut self, x: f32) {
+        if self.sidebar_resizing {
+            self.sidebar_width =
+                (x - SIDEBAR_EDGE_OFFSET).clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        }
+    }
+
+    pub(super) fn sidebar_resize_ended(&mut self) -> Task<Message> {
+        if std::mem::take(&mut self.sidebar_resizing) {
+            return self.focus_terminal();
+        }
+        Task::none()
+    }
+
+    pub(super) fn sidebar_resize_reset(&mut self) {
+        self.sidebar_width = SIDEBAR_DEFAULT_WIDTH;
     }
 
     pub(super) fn sidebar_preview_expired(&mut self, epoch: u64) -> Task<Message> {
@@ -435,7 +467,7 @@ impl App {
             .spacing(5),
         )
         .padding(6)
-        .width(202)
+        .width(self.sidebar_width)
         .height(Fill)
         .style(style::panel_in(
             p,

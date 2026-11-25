@@ -114,6 +114,9 @@ pub struct App {
     pending_confirmation: Option<Confirmation>,
     sidebar_visible: bool,
     sidebar_preview: SidebarPreview,
+    sidebar_width: f32,
+    /// Whether the sidebar edge is being dragged (see `sidebar_drag`).
+    sidebar_resizing: bool,
     picking: bool,
     creation: Option<create::Draft>,
     worktree_name_draft: Option<RenameDraft>,
@@ -198,6 +201,11 @@ pub enum Message {
     ToggleSidebar,
     SidebarHover(SidebarZone, bool),
     SidebarPreviewExpired(u64),
+    SidebarResizeStarted,
+    /// The cursor x position (window coordinates) while dragging the sidebar edge.
+    SidebarResized(f32),
+    SidebarResizeEnded,
+    SidebarResizeReset,
     Refreshed(usize, Result<Vec<Worktree>, String>),
     ToggleProject(ProjectId),
     /// Lists all of a project's worktrees (`true`) or only the first few.
@@ -346,6 +354,8 @@ impl App {
             pending_confirmation: None,
             sidebar_visible: true,
             sidebar_preview: SidebarPreview::default(),
+            sidebar_width: sidebar::SIDEBAR_DEFAULT_WIDTH,
+            sidebar_resizing: false,
             picking: false,
             creation: None,
             worktree_name_draft: None,
@@ -412,9 +422,17 @@ impl App {
         } else {
             Subscription::none()
         };
+        // While dragging, follow the cursor across the whole window, not just the
+        // thin handle: the pointer leaves the handle as soon as it moves quickly.
+        let resize = if self.sidebar_resizing {
+            iced::event::listen_with(sidebar_drag)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch([
             terminal,
             settings,
+            resize,
             self.watch_subscription(),
             self.session_subscription(),
             iced::event::listen_with(window_events),
@@ -454,6 +472,24 @@ fn window_events(
             if status == iced::event::Status::Ignored =>
         {
             Some(Message::FileDropped(path))
+        }
+        _ => None,
+    }
+}
+
+/// Mouse events while the sidebar edge is dragged (subscribed only then).
+fn sidebar_drag(
+    event: iced::Event,
+    _: iced::event::Status,
+    _: iced::window::Id,
+) -> Option<Message> {
+    use iced::mouse::{Button, Event};
+    match event {
+        iced::Event::Mouse(Event::CursorMoved { position }) => {
+            Some(Message::SidebarResized(position.x))
+        }
+        iced::Event::Mouse(Event::ButtonReleased(Button::Left) | Event::CursorLeft) => {
+            Some(Message::SidebarResizeEnded)
         }
         _ => None,
     }
