@@ -5,6 +5,9 @@ use iced_term::{AlacrittyEvent, BackendCommand, Command, Event, Terminal, Termin
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
+/// Logical pixels between the terminal grid and the edge of its pane.
+const TERMINAL_INSET: f32 = 3.0;
+
 pub struct Console {
     widget: Terminal,
     /// The worktree whose tmux session the client in this terminal shows.
@@ -85,8 +88,10 @@ impl Console {
     /// The terminal, rounded to the `radius` of the pane it fills, so its
     /// background doesn't square off a rounded window corner (UI-13).
     pub fn view(&self, radius: iced::border::Radius) -> Element<'_, Event> {
-        // Embed edge-to-edge: standalone Alacritty window padding does not apply.
-        TerminalView::show_rounded(&self.widget, self.scale, radius)
+        // A small inset in the terminal's own background color keeps glyphs
+        // (wide emoji especially) off the pane's edge (UI-06). The user's
+        // Alacritty `window.padding` still doesn't apply.
+        TerminalView::show_rounded(&self.widget, self.scale, radius, TERMINAL_INSET)
     }
 
     pub fn is_open(&self) -> bool {
